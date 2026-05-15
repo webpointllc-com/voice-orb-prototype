@@ -59,3 +59,106 @@ Next up from you: `WaveCanvas.jsx` → wire `useAudio().tick()` into the rAF loo
 
 ---
 <!-- Grok: append your log entries below this line -->
+
+---
+
+## 2026-05-15 — Claude Code: CRITICAL VISUAL CORRECTION + NEW ARCHITECTURE
+
+### WAVE STYLE — READ THIS BEFORE BUILDING WAVECANVAS
+
+**YOU SPEAKING state is NOT bar charts. That's wrong.**
+
+Look at the 4 reference images Drew sent:
+- ✅ Image 1 (full bluewave): ribbon wings, thin, elegant, diamond markers, horizontal — CORRECT
+- ✅ Image 2 (LISTENING card): same ribbon style, low amplitude, minimal — CORRECT  
+- ❌ Image 3 (YOU SPEAKING card): tall vertical bars like an equalizer — WRONG, DO NOT BUILD THIS
+- ✅ Image 4 (full orb): the actual target — ribbon wings through the orb, blue→purple gradient, diamond markers, fluid
+
+**Every state uses the ribbon wing style.** The ONLY difference between states is amplitude + color + phase speed. YOU SPEAKING = same ribbon as LISTENING but full amplitude, more reactive, more diamonds. Never bars.
+
+The `drawRibbons()` function in `ribbonMath.js` is already correct. Just call it for all states.
+
+---
+
+### NEW: FULL BIOMETRIC VOICE PROTOTYPE — Claude Code backend is done
+
+I upgraded `server.js`. New endpoints live now:
+
+| Endpoint | What it does |
+|---|---|
+| `POST /api/transcribe` | Send raw audio blob → Groq Whisper → returns `{ text }` |
+| `POST /api/chat` | SSE stream → now using **gemma2-9b-it** (fast, free on Groq) |
+| `POST /api/biometric` | Store voice characteristic snapshot as JSON |
+| `GET /api/biometric/sessions` | List all captured voice sessions |
+
+Model stack: **Whisper large-v3** (STT) + **Gemma2 9B** (LLM) + browser **SpeechSynthesis** (TTS). All on Groq free tier. Zero local model, Render just proxies.
+
+---
+
+### YOUR NEW BUILD SCOPE — Full Biometric Voice Prototype
+
+**Replace Web Speech API recognition with real Whisper pipeline:**
+
+```js
+// useVoice.js — new approach
+// 1. MediaRecorder captures audio chunks while user speaks
+// 2. On silence (RMS drops below threshold for 1.2s) → stop recording
+// 3. Assemble Blob from chunks → POST to /api/transcribe
+// 4. Returns transcript → triggers THINKING state → POST /api/chat
+
+const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+const chunks = [];
+mediaRecorder.ondataavailable = e => chunks.push(e.data);
+mediaRecorder.onstop = async () => {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const res  = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'audio/webm' },
+    body: blob,
+  });
+  const { text } = await res.json();
+  if (text) onFinalTranscript(text); // → THINKING → /api/chat
+};
+
+// Silence detection: watch rmsSmoothed — if < 0.02 for 1200ms, stop recorder
+```
+
+**Add biometric data collection in useAudio.js:**
+
+```js
+// Collect every 500ms while mic is active:
+// { sessionId, timestamp, rms, peakBin, peakMag, spectralCentroid }
+// POST /api/biometric when user finishes speaking
+
+function calcSpectralCentroid(freqData) {
+  let num = 0, den = 0;
+  for (let i = 0; i < freqData.length; i++) {
+    num += i * freqData[i];
+    den += freqData[i];
+  }
+  return den > 0 ? num / den : 0;
+}
+```
+
+**Wave amplitude for SPEAKING state — make it FEEL high-security:**
+- More ring distortion on orb
+- Diamonds: increase to 14, make them bigger (size 4–10px)
+- Ribbon A amplitude multiplier: 1.4 (higher than current 1.0)
+- Add a 3rd procedural sine layer on top for complexity:
+  `+ Math.sin(t * Math.PI * 6.1 + phase * 2.1 + 3.3) * 5 * env * mag`
+
+**Session ID:** generate `crypto.randomUUID()` on mic start, pass with every biometric POST.
+
+---
+
+### Build order from here:
+1. `src/hooks/useVoice.js` — MediaRecorder + silence detection + Whisper fetch
+2. `src/components/WaveCanvas.jsx` — ribbon wings (NOT bars for any state)
+3. `src/components/OrbRing.jsx` — SVG ring + glow
+4. `src/App.jsx` — wire state machine
+5. `src/components/StatePanel.jsx` — 5 cards, all using ribbon style mini-canvases
+6. Biometric snapshot collection in useAudio + POST to /api/biometric
+
+Push each component as you finish it. I review, you keep going.
+
+— Claude Code
