@@ -155,29 +155,155 @@ uniform float uDistortion; // ring geometry distortion for RESPONDING state
 
 ---
 
-## Waveform — Web Audio API Technical Spec
+## Waveform / Wings — Web Audio API Technical Spec
+
+> **REFERENCE IMPLEMENTATION EXISTS.** The ribbon wing math below is proven and working. Do not redesign it — replicate the architecture exactly, then extend it as described. The pattern comes from a production voice auth prototype.
+
+### Architecture
+
+The waveform is NOT a simple line chart. It is two **closed filled ribbon paths** — `ribbonA` and `ribbonB` — that span horizontally across the full viewport width, passing through the vertical center of the orb. They taper to zero amplitude at both ends (where they meet the screen edges) and bloom in the middle. This creates the "wing" silhouette in the reference screenshot.
+
+The wings extend **outside** the Three.js orb canvas onto a full-width 2D canvas overlay. Inside the orb ring they pass through as a continuous wave. Left wing: left screen edge → orb left edge. Right wing: orb right edge → right screen edge. Inside orb: seamless continuation.
+
+### Audio Setup
 
 ```javascript
 // getUserMedia → AudioContext → AnalyserNode
-// analyser.fftSize = 2048
-// analyser.smoothingTimeConstant = 0.85
+analyser.fftSize = 128;                   // 64 frequency bins — sufficient, keeps CPU low
+analyser.smoothingTimeConstant = 0.6;     // fast enough to feel reactive
 
-// Canvas 2D overlay positioned absolutely over the Three.js canvas
-// Width: 100vw, Height: 160px, vertically centered at orb center
+// Per-frame smoothing on top (exponential):
+// attack fast (0.45), decay slow (0.12) — gives elastic snap-back feel
+const smoothed = new Float32Array(64);
+// target > current → k = 0.45 (fast attack)
+// target < current → k = 0.12 (slow decay)
+smoothed[i] = cur + (target - cur) * k;
 
-// Draw loop (requestAnimationFrame):
-//   - getByteTimeDomainData() for waveform
-//   - Map 0-255 → -amplitude to +amplitude
-//   - Draw as polyline with quadraticCurveTo for smoothing
-//   - Diamond markers: drawn at local maxima (where derivative crosses zero going negative)
-//   - Stroke style: current state color
-//   - Clear each frame
+// RMS for overall amplitude:
+let sum = 0;
+for (let i = 0; i < timeDomainData.length; i++) {
+  const v = (timeDomainData[i] - 128) / 128;
+  sum += v * v;
+}
+rms = Math.sqrt(sum / timeDomainData.length);
+rmsSmoothed = rmsSmoothed + (rms - rmsSmoothed) * 0.18;
+```
 
-// States without live mic (THINKING, RESPONDING): 
-//   - Procedural sine: y = A * sin(2π * x/λ + phase)
-//   - phase increments each frame for flowing left-to-right motion
-//   - THINKING: very low amplitude (A=8), dotted (setLineDash([4,8]))
-//   - RESPONDING: A=28, smooth, λ = canvas.width / 2
+### Ribbon Path Math — Copy This Exactly, Then Extend
+
+```javascript
+const ribbonPts = 80;          // control points — use 80 minimum (was 56, increase for smoother curves)
+const span = viewportWidth;    // full screen width (was innerR * 1.45, now full vw)
+const left = 0;                // start at left screen edge
+const orbCenterY = window.innerHeight / 2;   // vertical center
+
+let pathA = "", pathB = "";
+
+// FORWARD PASS — top edge of ribbon
+for (let i = 0; i <= ribbonPts; i++) {
+  const t = i / ribbonPts;
+  const x = left + t * span;
+  
+  // Envelope: tapers to 0 at both screen edges, peaks at center
+  // This is what creates the "wing" shape — do not change this
+  const env = Math.sin(t * Math.PI);
+  
+  // Frequency bin for this horizontal position
+  const bin = Math.floor(t * 60);
+  const mag = (smoothed[bin] || 0) + 0.04;
+  
+  // Ribbon A: primary wave — two sine layers at different frequencies/phases
+  const yA = orbCenterY
+    + Math.sin(t * Math.PI * 2     + phase * 1.2)        * 18 * env * (0.4 + mag * 1.6)
+    + Math.sin(t * Math.PI * 4.3   + phase * 0.7 + 0.9)  *  7 * env * (0.3 + mag * 0.9);
+  
+  // Ribbon B: secondary wave — offset phase, slightly different frequency
+  const yB = orbCenterY
+    + Math.sin(t * Math.PI * 2.4   + phase * 0.9 + 1.2)  * 20 * env * (0.4 + mag * 1.4)
+    + Math.sin(t * Math.PI * 3.8   + phase * 1.4 + 2.1)  *  6 * env * (0.25 + mag * 0.8);
+  
+  pathA += (i === 0 ? "M" : "L") + x.toFixed(2) + " " + yA.toFixed(2) + " ";
+  pathB += (i === 0 ? "M" : "L") + x.toFixed(2) + " " + yB.toFixed(2) + " ";
+}
+
+// RETURN PASS — bottom edge closes the ribbon shape (thin envelope = ribbon has thickness)
+for (let i = ribbonPts; i >= 0; i--) {
+  const t = i / ribbonPts;
+  const x = left + t * span;
+  const env = Math.sin(t * Math.PI);
+  // Return path is much flatter — this gives the ribbon its physical thickness
+  pathA += "L" + x.toFixed(2) + " " + (orbCenterY + 5 * env).toFixed(2)  + " ";
+  pathB += "L" + x.toFixed(2) + " " + (orbCenterY + 7 * env).toFixed(2)  + " ";
+}
+
+pathA += "Z";
+pathB += "Z";
+```
+
+**Phase increment per frame:**
+```javascript
+phase += 0.016;  // ~60fps feel — do not use clock-based delta here, keep it simple
+```
+
+### Ribbon Gradients
+
+Each ribbon path is filled — NOT stroked. Use `createLinearGradient` horizontal:
+
+```javascript
+// Ribbon A — blue → purple, opacity 0 at edges, 0.72 at center
+const gradA = ctx.createLinearGradient(0, 0, canvas.width, 0);
+gradA.addColorStop(0,    'rgba(75, 139, 255, 0)');
+gradA.addColorStop(0.5,  'rgba(75, 139, 255, 0.72)');
+gradA.addColorStop(1,    'rgba(139, 123, 255, 0)');
+
+// Ribbon B — purple → blue, offset slightly
+const gradB = ctx.createLinearGradient(0, 0, canvas.width, 0);
+gradB.addColorStop(0,    'rgba(139, 123, 255, 0)');
+gradB.addColorStop(0.5,  'rgba(139, 123, 255, 0.58)');
+gradB.addColorStop(1,    'rgba(75, 139, 255, 0)');
+```
+
+Draw B first (back), then A on top. Both use `ctx.globalCompositeOperation = 'lighter'` for additive glow where they overlap.
+
+### Diamond Markers
+
+After drawing ribbons, add 7–14 diamond/rhombus markers along ribbon A's forward pass at local maxima:
+
+```javascript
+// Find local maxima in ribbonA points array (where dy changes sign negative→positive)
+// At each peak: draw a rotated square (diamond)
+ctx.save();
+ctx.translate(peakX, peakY);
+ctx.rotate(Math.PI / 4);
+const size = 3 + mag * 5;   // size scales with audio magnitude
+ctx.fillStyle = 'rgba(75, 139, 255, 0.85)';
+ctx.fillRect(-size/2, -size/2, size, size);
+ctx.restore();
+```
+
+### Center Baseline
+
+Draw a single 1px horizontal line at orbCenterY, full viewport width, opacity 0.12. This anchors the ribbons visually. Color: current state color.
+
+### State Behavior
+
+| State | Amplitude multiplier | Phase speed | Ribbon opacity | Extra |
+|---|---|---|---|---|
+| LISTENING | 0.6× (ambient) | 0.016 | 0.65 | Slow idle breath |
+| SPEAKING | 1.0× (live mic) | 0.016 | 0.9 | Fully reactive to freq bins |
+| THINKING | 0.2× (procedural) | 0.008 | 0.4 | `setLineDash([4,8])` on baseline only |
+| RESPONDING | 0.7× (procedural sine) | 0.022 | 0.85 | Faster phase, smoother |
+| INTERRUPTED | burst → 0 in 400ms | — | fade to 0 then SPEAKING | GSAP tween amplitude 1.8→0 |
+
+### Canvas Setup
+
+```javascript
+// Separate <canvas id="wave-canvas"> — DO NOT draw on Three.js canvas
+// Position: absolute, top: 0, left: 0, width: 100vw, height: 100vh
+// pointer-events: none  (clicks pass through to Three.js and buttons)
+// Resize handler: resize canvas pixel dimensions on window resize
+// DPR: canvas.width = window.innerWidth * devicePixelRatio
+//       ctx.scale(dpr, dpr)
 ```
 
 ---
