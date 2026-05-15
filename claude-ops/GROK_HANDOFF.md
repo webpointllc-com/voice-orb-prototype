@@ -2,456 +2,892 @@
 **Issued by:** Claude Code (Anthropic)
 **Date:** 2026-05-15
 **Repo:** voice-orb-prototype
-**Your job:** Build the entire frontend. All graphics. All animation. All voice pipeline. Go hard.
+**Stack:** React 19 + Vite 6 + Tailwind CSS v4 + Framer Motion v11 + Web Audio API + Web Speech API
+**Your job:** Build the entire frontend. Pixel perfect. Max it out.
 
 ---
 
-## What This Is
+## SCREENSHOT REFERENCE — Read This Before Every Decision
 
-A voice-first AI interface. Think: a living, breathing orb that responds to voice state in real time.  
-Dark background. Glowing ring. Animated waveforms. Five distinct states, each with its own visual behavior.  
-Runs in browser. No framework — vanilla JS ES modules + Three.js + Web Audio API + Web Speech API.
+The target is the exact screenshot in this repo root (`reference.png`). Every pixel matters. Here is what's in it:
 
-The backend is already built (`server.js`) — Express + Groq streaming API. You only touch `public/`.
+**Main viewport (top ~75% of screen):**
+- Pure black background `#000000`
+- Center: large glowing circle ring ~420px, NOT filled — ring only, ~2px stroke, gradient blue→purple (top-left blue `#4F8BFF`, bottom-right purple `#9B7BFF`), outer glow corona via SVG filter
+- Inside the orb ring: 3–4 concentric ghost rings, each larger, each more transparent (~8% opacity), evenly spaced ~16px apart — they are the "sonar" pulse rings
+- Centered text inside orb: `"I'm listening"` (white, 500 weight, ~22px) and below it `"Speak naturally"` (gray `#888`, 400 weight, ~14px)
+- Horizontal waveform running full viewport width, vertically centered at orb center:
+  - Thin baseline (1px, low opacity)
+  - Small amplitude wave bumps (NOT big bars — subtle, elegant, like EKG flatline with gentle activity)
+  - 6–10 **diamond/rhombus markers** at waveform peaks — small rotated squares, filled, same color as waveform
+  - Color in LISTENING state: teal `#00D4FF` left side fading to purple `#9B7BFF` right side
+  - Wings extend edge-to-edge; inside the orb ring the wave continues through
 
----
+**Top HUD:**
+- Top left: `● Listening` — small green dot `#10B981` + text `"Listening"`, 11px uppercase, DM Mono or monospace, inside a dark rounded pill `rgba(255,255,255,0.06)` with subtle border
+- Top center: `"LIVE INTERFACE PREVIEW"` — 11px, letter-spacing wide, color `#555`, DM Mono
+- Top right: gear icon ⚙, 20px, `rgba(255,255,255,0.4)`, clicking opens settings panel
 
-## Reference Screenshot
+**Bottom center (below orb):**
+- Microphone button: dark rounded pill ~56px diameter, `rgba(255,255,255,0.08)` bg, subtle border, mic SVG icon white
 
-The screenshot attached to this project (see repo root `/reference.png`) shows the target design:
-
-- **Center:** Large glowing orb (~420px), blue → purple gradient ring, concentric ripple rings expanding outward, text inside
-- **Waveform bar:** Horizontal line running edge to edge through the orb's vertical center — diamond/rhombus markers at peak points, amplitude-reactive
-- **Top left:** `● Listening` state pill badge
-- **Top right:** Settings gear icon
-- **Bottom center:** Microphone toggle button (dark pill with mic SVG)
-- **State panel (bottom):** 5 cards — LISTENING / YOU SPEAKING / THINKING / AI RESPONDING / INTERRUPTED — each with its own mini waveform animation preview
-
----
-
-## Tech Stack — Use Exactly These
-
-| Layer | Library | CDN |
-|---|---|---|
-| 3D orb / shaders | Three.js r165 | `https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js` |
-| Post-processing | Three.js UnrealBloomPass | same CDN, addons path |
-| Transitions | GSAP 3.12.5 | `https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js` |
-| Voice input | Web Speech API (SpeechRecognition) | native browser |
-| Audio analysis | Web Audio API (AnalyserNode) | native browser |
-| Chat streaming | Fetch + SSE | native browser |
-| Fonts | DM Sans 400/600, DM Mono 400 | Google Fonts |
-
-No webpack. No Vite. No React. ES modules via `<script type="module">`. Works on Render hobby tier with zero build step.
+**State panel (bottom ~25% of screen):**
+- Full-width strip, 5 cards side by side with equal spacing
+- Each card: `rgba(255,255,255,0.04)` bg, `rgba(255,255,255,0.08)` border 1px, border-radius 16px, padding 16px
+- Card label: uppercase 11px DM Mono, color-coded
+- Mini waveform canvas (150×50px) in each card — always looping, no mic needed
+- Active state card: colored border 1px in state color
+- Three dots `···` at bottom of each card (more options hint)
 
 ---
 
-## File Structure You Will Create (all inside `public/`)
+## Project Structure — Create This Exactly
 
 ```
-public/
-├── index.html          ← entry point (you write this)
-├── style.css           ← base layout + dark theme + state panel (you write this)
-└── src/
-    ├── main.js         ← app orchestration, state machine (you write this)
-    ├── orb.js          ← Three.js orb: ring, bloom, concentric ripples (you write this)
-    ├── waveform.js     ← Web Audio AnalyserNode → canvas waveform (you write this)
-    ├── voice.js        ← SpeechRecognition mic input, interim/final results (you write this)
-    ├── chat.js         ← SSE fetch to /api/chat, streams AI response text (you write this)
-    └── tts.js          ← SpeechSynthesis TTS — speaks AI response aloud (you write this)
-```
-
----
-
-## The 5 States — Full Visual Spec
-
-Implement a state machine. Only one state active at a time. Transitions are animated (GSAP, ~400ms).
-
-### State 1: `LISTENING`
-*Waiting for user to speak.*
-- Orb ring color: `#00d4ff` (teal/cyan) → `#2b8ef0` (blue) gradient
-- Ring pulses slowly: scale 1.0 → 1.03 → 1.0, 3s loop, ease sinusoidal
-- Concentric rings: 3 rings expanding outward slowly, opacity fading 0.3 → 0, 4s stagger
-- Waveform: flat with subtle ambient noise, teal `#00d4ff`, amplitude ~12px
-- Diamond markers on waveform: 5–7 evenly spaced, small, same color
-- Orb text: `"I'm listening"` (DM Sans 600, white, 22px) / `"Speak naturally"` (DM Sans 400, #aaa, 14px)
-- State badge: `● Listening` top-left, teal dot
-
-### State 2: `SPEAKING` (user is talking)
-*SpeechRecognition fires `onresult` with interim results.*
-- Orb ring color: `#2b8ef0` (blue) → `#6c63ff` (purple) gradient, brighter
-- Ring scale pulses faster with microphone amplitude: scale 1.0 → 1.08, synced to audio
-- Waveform: LIVE from Web Audio AnalyserNode — full reactive spiky bars, blue `#2b8ef0`
-- Amplitude follows actual mic input (map AnalyserNode frequencyData to bar heights)
-- Diamond markers: increase count to 12–15, jitter slightly
-- Orb text: interim transcript text (truncate to ~30 chars, fade old text out as new comes in)
-- Orb ring inner glow: intensifies with amplitude (UnrealBloomPass strength 0.8 → 2.0)
-- State badge: `● Speaking` blue dot
-
-### State 3: `THINKING`
-*Final transcript sent to API. Waiting for first SSE chunk.*
-- Orb ring color: fades to `#9b59b6` → `#6c63ff` (purple)
-- Center: glowing dot pulses at center of orb, 6px → 20px, `#b967ff`, 1.2s loop
-- Dotted orbit: 8 small dots (4px each, `#6c63ff` 60% opacity) orbiting the center dot at ~80px radius, rotating 360° every 2s
-- Waveform: collapses to flat, dotted line with dots drifting slowly, purple `#6c63ff`
-- Diamond markers: shrink, space out, 3 only, pulse opacity
-- Orb text: cycling through domain thinking labels (fade in/out, 1.2s each):
-  - `"Searching..."`
-  - `"Processing..."`
-  - `"Formulating..."`
-  - `"Cross-referencing..."`
-  - `"Almost there..."`
-- State badge: `● Thinking` purple dot
-
-### State 4: `RESPONDING`
-*SSE chunks streaming in. TTS speaking.*
-- Orb ring color: `#e91e8c` → `#ff6b9d` (magenta/pink) gradient
-- Ring animation: smooth flowing sine wave distortion along ring edge (not just scale — morph the ring geometry with a shader)
-- Waveform: smooth sine wave, magenta `#e91e8c`, amplitude mid-level, flowing left-to-right continuously
-- Diamond markers: 4–5, riding the sine peaks
-- Orb text: streaming response text (auto-scroll, DM Mono 400, 13px, max 3 lines visible)
-- Bloom: UnrealBloomPass strength → 2.5, radius 0.4, threshold 0.1
-- State badge: `● Responding` magenta dot
-- TTS voice speaks the text simultaneously with streaming display
-
-### State 5: `INTERRUPTED`
-*User speaks while AI is responding — cuts TTS, goes back to SPEAKING.*
-- 400ms burst animation: starburst/flash from orb center — radial lines shooting out, `#ff6b9d` → transparent
-- Orb ring: flash white → drops back to SPEAKING state colors
-- Waveform: burst of noise then transitions to SPEAKING waveform
-- SpeechSynthesis: `.cancel()` immediately
-- Transition: INTERRUPTED → SPEAKING (400ms)
-- State badge: `● Interrupted` hot pink dot, fades to Speaking
-
----
-
-## Orb — Three.js Technical Spec
-
-```javascript
-// Orb is a THREE.Mesh with a custom ShaderMaterial on a TorusGeometry
-// NOT a circle — actual 3D torus rendered with orthographic or perspective camera
-// Ring thickness: tube radius ~0.08, outer radius ~1.0
-
-// Vertex shader: standard passthrough + time uniform for ripple distortion
-// Fragment shader: 
-//   - Fresnel-based edge glow (bright at edges, transparent at center of tube cross-section)
-//   - Color uniform: vec3 colorA, vec3 colorB — lerp based on angle around torus
-//   - uTime for animated shimmer along the ring
-
-// UnrealBloomPass on top for the glow corona
-// Background: pure black #000000 — bloom needs dark scene to look right
-
-// Concentric rings: 3x THREE.RingGeometry, LineSegments or Mesh with MeshBasicMaterial
-// Scale animated with GSAP, opacity fades as they expand
-```
-
-**Shader uniforms you must expose:**
-```glsl
-uniform float uTime;
-uniform vec3 uColorA;      // inner color
-uniform vec3 uColorB;      // outer/gradient color  
-uniform float uIntensity;  // bloom/glow intensity, driven by audio amplitude
-uniform float uDistortion; // ring geometry distortion for RESPONDING state
+voice-orb-prototype/
+├── server.js                    ← ALREADY DONE. DO NOT TOUCH.
+├── package.json                 ← update: add frontend dev deps
+├── vite.config.js               ← Vite config (you create)
+├── tailwind.config.js           ← Tailwind v4 config (you create)
+├── index.html                   ← Vite entry (you create)
+├── src/
+│   ├── main.jsx                 ← React 19 root mount
+│   ├── App.jsx                  ← Top-level layout + state machine
+│   ├── styles/
+│   │   └── globals.css          ← Tailwind imports + CSS custom props
+│   ├── hooks/
+│   │   ├── useAudio.js          ← Web Audio API: mic, AnalyserNode, smoothed bins, RMS
+│   │   ├── useVoice.js          ← Web Speech API: SpeechRecognition, interim/final results
+│   │   └── useTTS.js            ← SpeechSynthesis: speak, cancel, voice select
+│   ├── components/
+│   │   ├── OrbRing.jsx          ← SVG orb: ring, glow, concentric rings, text
+│   │   ├── WaveCanvas.jsx       ← Canvas 2D: ribbon wings full viewport
+│   │   ├── StateBadge.jsx       ← Top-left state pill badge
+│   │   ├── MicButton.jsx        ← Center mic toggle button
+│   │   ├── StatePanel.jsx       ← Bottom 5-card row
+│   │   ├── StateCard.jsx        ← Individual state card + mini canvas
+│   │   └── SettingsPanel.jsx    ← Slide-in settings drawer
+│   └── lib/
+│       ├── stateMachine.js      ← STATE constants + transitions
+│       └── ribbonMath.js        ← Waveform math (see spec below) — isolated, testable
+├── claude-ops/                  ← This folder. Do not modify.
+└── public/
+    └── reference.png            ← Screenshot reference (add it yourself)
 ```
 
 ---
 
-## Waveform / Wings — Web Audio API Technical Spec
+## Package Setup
 
-> **REFERENCE IMPLEMENTATION EXISTS.** The ribbon wing math below is proven and working. Do not redesign it — replicate the architecture exactly, then extend it as described. The pattern comes from a production voice auth prototype.
+Update `package.json` to add these. Keep existing backend deps:
 
-### Architecture
-
-The waveform is NOT a simple line chart. It is two **closed filled ribbon paths** — `ribbonA` and `ribbonB` — that span horizontally across the full viewport width, passing through the vertical center of the orb. They taper to zero amplitude at both ends (where they meet the screen edges) and bloom in the middle. This creates the "wing" silhouette in the reference screenshot.
-
-The wings extend **outside** the Three.js orb canvas onto a full-width 2D canvas overlay. Inside the orb ring they pass through as a continuous wave. Left wing: left screen edge → orb left edge. Right wing: orb right edge → right screen edge. Inside orb: seamless continuation.
-
-### Audio Setup
-
-```javascript
-// getUserMedia → AudioContext → AnalyserNode
-analyser.fftSize = 128;                   // 64 frequency bins — sufficient, keeps CPU low
-analyser.smoothingTimeConstant = 0.6;     // fast enough to feel reactive
-
-// Per-frame smoothing on top (exponential):
-// attack fast (0.45), decay slow (0.12) — gives elastic snap-back feel
-const smoothed = new Float32Array(64);
-// target > current → k = 0.45 (fast attack)
-// target < current → k = 0.12 (slow decay)
-smoothed[i] = cur + (target - cur) * k;
-
-// RMS for overall amplitude:
-let sum = 0;
-for (let i = 0; i < timeDomainData.length; i++) {
-  const v = (timeDomainData[i] - 128) / 128;
-  sum += v * v;
+```json
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node server.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "framer-motion": "^11.0.0",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^0.3.3"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "nodemon": "^3.1.0"
+  }
 }
-rms = Math.sqrt(sum / timeDomainData.length);
-rmsSmoothed = rmsSmoothed + (rms - rmsSmoothed) * 0.18;
 ```
 
-### Ribbon Path Math — Copy This Exactly, Then Extend
+**vite.config.js:**
+```js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
-```javascript
-const ribbonPts = 80;          // control points — use 80 minimum (was 56, increase for smoother curves)
-const span = viewportWidth;    // full screen width (was innerR * 1.45, now full vw)
-const left = 0;                // start at left screen edge
-const orbCenterY = window.innerHeight / 2;   // vertical center
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  build: { outDir: 'dist' },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3000'
+    }
+  }
+})
+```
 
-let pathA = "", pathB = "";
+**Update server.js** — add one line to serve Vite's `dist/` in production:
+```js
+// After existing static middleware, add:
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, 'dist')));
+  app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'dist/index.html')));
+}
+```
 
-// FORWARD PASS — top edge of ribbon
-for (let i = 0; i <= ribbonPts; i++) {
-  const t = i / ribbonPts;
-  const x = left + t * span;
-  
-  // Envelope: tapers to 0 at both screen edges, peaks at center
-  // This is what creates the "wing" shape — do not change this
-  const env = Math.sin(t * Math.PI);
-  
-  // Frequency bin for this horizontal position
-  const bin = Math.floor(t * 60);
-  const mag = (smoothed[bin] || 0) + 0.04;
-  
-  // Ribbon A: primary wave — two sine layers at different frequencies/phases
-  const yA = orbCenterY
-    + Math.sin(t * Math.PI * 2     + phase * 1.2)        * 18 * env * (0.4 + mag * 1.6)
-    + Math.sin(t * Math.PI * 4.3   + phase * 0.7 + 0.9)  *  7 * env * (0.3 + mag * 0.9);
-  
-  // Ribbon B: secondary wave — offset phase, slightly different frequency
-  const yB = orbCenterY
-    + Math.sin(t * Math.PI * 2.4   + phase * 0.9 + 1.2)  * 20 * env * (0.4 + mag * 1.4)
-    + Math.sin(t * Math.PI * 3.8   + phase * 1.4 + 2.1)  *  6 * env * (0.25 + mag * 0.8);
-  
-  pathA += (i === 0 ? "M" : "L") + x.toFixed(2) + " " + yA.toFixed(2) + " ";
-  pathB += (i === 0 ? "M" : "L") + x.toFixed(2) + " " + yB.toFixed(2) + " ";
+---
+
+## CSS Custom Properties (globals.css)
+
+```css
+@import "tailwindcss";
+
+:root {
+  --orb-blue:    #4F8BFF;
+  --orb-purple:  #9B7BFF;
+  --orb-teal:    #00D4FF;
+  --orb-magenta: #E91E8C;
+  --orb-pink:    #FF6B9D;
+  --orb-green:   #10B981;
+  --orb-bg:      #000000;
+  --orb-surface: rgba(255,255,255,0.04);
+  --orb-border:  rgba(255,255,255,0.08);
+  --orb-text:    #FFFFFF;
+  --orb-muted:   #888888;
+  --orb-dim:     rgba(255,255,255,0.06);
 }
 
-// RETURN PASS — bottom edge closes the ribbon shape (thin envelope = ribbon has thickness)
-for (let i = ribbonPts; i >= 0; i--) {
-  const t = i / ribbonPts;
-  const x = left + t * span;
-  const env = Math.sin(t * Math.PI);
-  // Return path is much flatter — this gives the ribbon its physical thickness
-  pathA += "L" + x.toFixed(2) + " " + (orbCenterY + 5 * env).toFixed(2)  + " ";
-  pathB += "L" + x.toFixed(2) + " " + (orbCenterY + 7 * env).toFixed(2)  + " ";
+body {
+  background: var(--orb-bg);
+  color: var(--orb-text);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  overflow: hidden;
+  height: 100dvh;
+  width: 100dvw;
 }
 
-pathA += "Z";
-pathB += "Z";
+/* Google Fonts — add to index.html <head> */
+/* DM Sans 400/500/600 + DM Mono 400 */
 ```
 
-**Phase increment per frame:**
-```javascript
-phase += 0.016;  // ~60fps feel — do not use clock-based delta here, keep it simple
+---
+
+## State Machine (lib/stateMachine.js)
+
+```js
+export const STATES = {
+  IDLE:        'IDLE',
+  LISTENING:   'LISTENING',   // mic on, no speech detected
+  SPEAKING:    'SPEAKING',    // user speaking (SpeechRecognition interim)
+  THINKING:    'THINKING',    // transcript sent, waiting for API
+  RESPONDING:  'RESPONDING',  // AI streaming response + TTS speaking
+  INTERRUPTED: 'INTERRUPTED', // user spoke while AI was responding
+}
+
+export const STATE_COLORS = {
+  IDLE:        '#555555',
+  LISTENING:   '#00D4FF',
+  SPEAKING:    '#4F8BFF',
+  THINKING:    '#9B7BFF',
+  RESPONDING:  '#E91E8C',
+  INTERRUPTED: '#FF6B9D',
+}
+
+export const STATE_LABELS = {
+  IDLE:        'Idle',
+  LISTENING:   'Listening',
+  SPEAKING:    'You Speaking',
+  THINKING:    'Thinking',
+  RESPONDING:  'AI Responding',
+  INTERRUPTED: 'Interrupted',
+}
+
+export const STATE_ORB_TEXT = {
+  IDLE:        ["Tap mic to start", ""],
+  LISTENING:   ["I'm listening", "Speak naturally"],
+  SPEAKING:    ["", ""],         // replaced by interim transcript
+  THINKING:    ["", ""],         // replaced by cycling thinking label
+  RESPONDING:  ["", ""],         // replaced by streaming response text
+  INTERRUPTED: ["Hold on...", ""],
+}
+
+// Cycling thinking labels — rotate every 1200ms in THINKING state
+export const THINKING_LABELS = [
+  "Searching...",
+  "Processing...",
+  "Formulating...",
+  "Cross-referencing...",
+  "Almost there...",
+]
 ```
 
-### Ribbon Gradients
+---
 
-Each ribbon path is filled — NOT stroked. Use `createLinearGradient` horizontal:
+## OrbRing Component (SVG — no Three.js needed)
 
-```javascript
-// Ribbon A — blue → purple, opacity 0 at edges, 0.72 at center
-const gradA = ctx.createLinearGradient(0, 0, canvas.width, 0);
-gradA.addColorStop(0,    'rgba(75, 139, 255, 0)');
-gradA.addColorStop(0.5,  'rgba(75, 139, 255, 0.72)');
-gradA.addColorStop(1,    'rgba(139, 123, 255, 0)');
+The orb is pure SVG with CSS filter for glow. This is lighter, crisper, and more controllable than WebGL for a 2D ring.
 
-// Ribbon B — purple → blue, offset slightly
-const gradB = ctx.createLinearGradient(0, 0, canvas.width, 0);
-gradB.addColorStop(0,    'rgba(139, 123, 255, 0)');
-gradB.addColorStop(0.5,  'rgba(139, 123, 255, 0.58)');
-gradB.addColorStop(1,    'rgba(75, 139, 255, 0)');
+```jsx
+// OrbRing.jsx
+// Props: state (STATES.*), text1, text2, amplitude (0-1)
+
+const ORB_SIZE = 420;
+const RING_R = 180;   // ring radius
+const CX = ORB_SIZE / 2;
+const CY = ORB_SIZE / 2;
+
+// SVG structure:
+// <defs>
+//   <linearGradient id="orbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+//     top-left: var(--orb-blue), bottom-right: var(--orb-purple)
+//   </linearGradient>
+//   <filter id="orbGlow">
+//     <feGaussianBlur stdDeviation="8" result="blur"/>
+//     <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+//   </filter>
+//   <filter id="orbGlowStrong">   ← used in RESPONDING state
+//     <feGaussianBlur stdDeviation="14" result="blur"/>
+//     ...
+//   </filter>
+// </defs>
+//
+// Concentric ghost rings (3 of them, behind main ring):
+// <circle cx={CX} cy={CY} r={RING_R + 20} stroke="rgba(79,139,255,0.06)" strokeWidth="1" fill="none"/>
+// <circle cx={CX} cy={CY} r={RING_R + 40} stroke="rgba(79,139,255,0.04)" strokeWidth="1" fill="none"/>
+// <circle cx={CX} cy={CY} r={RING_R + 60} stroke="rgba(79,139,255,0.025)" strokeWidth="1" fill="none"/>
+//
+// Main ring:
+// <circle cx={CX} cy={CY} r={RING_R} stroke="url(#orbGrad)" strokeWidth="2" fill="none"
+//         filter="url(#orbGlow)"/>
+//
+// Text group (centered):
+// <text x={CX} y={CY - 10} textAnchor="middle" fill="white" fontSize="22" fontWeight="500"
+//       fontFamily="DM Sans">{text1}</text>
+// <text x={CX} y={CY + 16} textAnchor="middle" fill="#888" fontSize="14" fontWeight="400"
+//       fontFamily="DM Sans">{text2}</text>
+
+// Animate:
+// - Ring scale pulse: Framer Motion animate={{ scale: [1, 1 + amplitude * 0.06, 1] }} transition={{ repeat: Infinity, duration: 2 }}
+// - Concentric rings: each ring Framer Motion animate={{ scale: [1, 1.08], opacity: [0.08, 0] }} staggered delays
+// - State color change: animate strokeColor via Framer Motion when state changes
+// - RESPONDING: switch filter to orbGlowStrong, strokeWidth to 2.5
 ```
 
-Draw B first (back), then A on top. Both use `ctx.globalCompositeOperation = 'lighter'` for additive glow where they overlap.
+**Framer Motion animation values per state:**
 
-### Diamond Markers
-
-After drawing ribbons, add 7–14 diamond/rhombus markers along ribbon A's forward pass at local maxima:
-
-```javascript
-// Find local maxima in ribbonA points array (where dy changes sign negative→positive)
-// At each peak: draw a rotated square (diamond)
-ctx.save();
-ctx.translate(peakX, peakY);
-ctx.rotate(Math.PI / 4);
-const size = 3 + mag * 5;   // size scales with audio magnitude
-ctx.fillStyle = 'rgba(75, 139, 255, 0.85)';
-ctx.fillRect(-size/2, -size/2, size, size);
-ctx.restore();
-```
-
-### Center Baseline
-
-Draw a single 1px horizontal line at orbCenterY, full viewport width, opacity 0.12. This anchors the ribbons visually. Color: current state color.
-
-### State Behavior
-
-| State | Amplitude multiplier | Phase speed | Ribbon opacity | Extra |
+| State | Ring color | Glow strength | Scale pulse | Pulse speed |
 |---|---|---|---|---|
-| LISTENING | 0.6× (ambient) | 0.016 | 0.65 | Slow idle breath |
-| SPEAKING | 1.0× (live mic) | 0.016 | 0.9 | Fully reactive to freq bins |
-| THINKING | 0.2× (procedural) | 0.008 | 0.4 | `setLineDash([4,8])` on baseline only |
-| RESPONDING | 0.7× (procedural sine) | 0.022 | 0.85 | Faster phase, smoother |
-| INTERRUPTED | burst → 0 in 400ms | — | fade to 0 then SPEAKING | GSAP tween amplitude 1.8→0 |
+| LISTENING | blue→purple | medium (8px blur) | 1.0→1.03 | 3s loop |
+| SPEAKING | blue→purple brighter | strong (12px) | tracks amplitude | realtime |
+| THINKING | purple solid | soft (6px) | 1.0→1.02 | 4s loop |
+| RESPONDING | magenta→pink | very strong (16px) | 1.0→1.05 | 1.8s loop |
+| INTERRUPTED | flash white→pink | burst (24px→6px) | 1.1→1.0 | 400ms once |
 
-### Canvas Setup
+---
 
-```javascript
-// Separate <canvas id="wave-canvas"> — DO NOT draw on Three.js canvas
-// Position: absolute, top: 0, left: 0, width: 100vw, height: 100vh
-// pointer-events: none  (clicks pass through to Three.js and buttons)
-// Resize handler: resize canvas pixel dimensions on window resize
-// DPR: canvas.width = window.innerWidth * devicePixelRatio
-//       ctx.scale(dpr, dpr)
+## WaveCanvas Component — THE WINGS (Read Every Word)
+
+> **This is the most important visual element. Get this right.**
+
+### What It Is
+
+A `<canvas>` element positioned `absolute, inset-0, w-screen h-screen, pointer-events-none`.
+It draws two layered closed ribbon paths that run horizontally across the full viewport,
+vertically centered at the exact y-coordinate of the orb's center.
+The ribbons taper to zero at both screen edges via a `Math.sin(t × π)` envelope —
+this is what makes them look like wings spreading from the orb outward.
+
+The orb SVG sits on top of this canvas. The wave passes through the orb visually (canvas behind SVG).
+
+### Audio Setup (in useAudio hook)
+
+```js
+// useAudio.js — returns { smoothed, rmsSmoothed, startMic, stopMic, isActive }
+// smoothed: Float32Array(64) — per-frame smoothed frequency bins
+// rmsSmoothed: number — overall amplitude 0-1
+
+const analyser = audioCtx.createAnalyser();
+analyser.fftSize = 128;               // 64 bins
+analyser.smoothingTimeConstant = 0.6; // hardware smoothing
+
+// Per-frame exponential smoothing:
+// attack fast (k=0.45 when rising), decay slow (k=0.12 when falling)
+// This gives that elastic snap-back feel — rises instantly, falls gently
+smoothed[i] = cur + (target - cur) * (target > cur ? 0.45 : 0.12);
+
+// RMS from time domain:
+analyser.getByteTimeDomainData(timeBuf);
+let sum = 0;
+for (let s of timeBuf) { const v = (s - 128) / 128; sum += v * v; }
+rms = Math.sqrt(sum / timeBuf.length);
+rmsSmoothed += (rms - rmsSmoothed) * 0.18;
+```
+
+### Ribbon Math (lib/ribbonMath.js)
+
+```js
+// drawRibbons(ctx, smoothed, rmsSmoothed, phase, state, canvasW, canvasH)
+
+export function drawRibbons(ctx, smoothed, rms, phase, state, W, H) {
+  ctx.clearRect(0, 0, W, H);
+
+  const CY = H / 2;
+  const PTS = 90;         // control points — higher = smoother curves
+  const span = W;
+  
+  // State-specific amplitude multiplier
+  const ampMap = {
+    IDLE: 0.15, LISTENING: 0.5, SPEAKING: 1.0,
+    THINKING: 0.2, RESPONDING: 0.7, INTERRUPTED: 0.0
+  };
+  const ampMult = ampMap[state] ?? 0.5;
+  
+  // State-specific phase speed (applied externally, passed as phase value)
+  // LISTENING: phase += 0.014/frame
+  // SPEAKING:  phase += 0.016/frame  
+  // THINKING:  phase += 0.007/frame (slow drift)
+  // RESPONDING: phase += 0.022/frame (faster flow)
+
+  // Build ribbon A and B point arrays
+  const ptsA = [], ptsB = [];
+
+  for (let i = 0; i <= PTS; i++) {
+    const t = i / PTS;
+    const x = t * span;
+
+    // THE ENVELOPE — do not change this formula
+    // sin(t*π) = 0 at edges, 1 at center
+    // This is what creates the wing taper
+    const env = Math.sin(t * Math.PI);
+
+    // Frequency bin for this x position (maps across 60 of 64 bins)
+    const bin = Math.floor(t * 60);
+    const mag = ((smoothed[bin] ?? 0) + 0.04) * ampMult;
+
+    // Ribbon A — two sine layers, different frequencies
+    const yA = CY
+      + Math.sin(t * Math.PI * 2.0   + phase * 1.20)       * 20 * env * (0.35 + mag * 1.6)
+      + Math.sin(t * Math.PI * 4.3   + phase * 0.70 + 0.9) *  8 * env * (0.25 + mag * 0.9);
+
+    // Ribbon B — offset phase and frequency for organic layering
+    const yB = CY
+      + Math.sin(t * Math.PI * 2.4   + phase * 0.90 + 1.2) * 22 * env * (0.35 + mag * 1.4)
+      + Math.sin(t * Math.PI * 3.8   + phase * 1.40 + 2.1) *  7 * env * (0.20 + mag * 0.8);
+
+    ptsA.push({ x, y: yA });
+    ptsB.push({ x, y: yB });
+  }
+
+  // Build closed path strings
+  // Forward: wave crest
+  // Return: thin flat envelope ~5-7px — gives the ribbon its physical thickness
+  function buildPath(pts, flatH) {
+    let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)} `;
+    for (let i = 1; i < pts.length; i++) {
+      d += `L ${pts[i].x.toFixed(2)} ${pts[i].y.toFixed(2)} `;
+    }
+    // Return pass
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const env = Math.sin((i / PTS) * Math.PI);
+      d += `L ${pts[i].x.toFixed(2)} ${(CY + flatH * env).toFixed(2)} `;
+    }
+    return d + 'Z';
+  }
+
+  // State-specific colors
+  const colorMap = {
+    IDLE:        ['rgba(85,85,85,', 'rgba(85,85,85,'],
+    LISTENING:   ['rgba(0,212,255,', 'rgba(107,99,255,'],
+    SPEAKING:    ['rgba(79,139,255,', 'rgba(107,99,255,'],
+    THINKING:    ['rgba(155,123,255,', 'rgba(107,99,255,'],
+    RESPONDING:  ['rgba(233,30,140,', 'rgba(255,107,157,'],
+    INTERRUPTED: ['rgba(255,107,157,', 'rgba(255,107,157,'],
+  };
+  const [cA, cB] = colorMap[state] ?? colorMap.LISTENING;
+
+  // Gradient — horizontal, opacity 0 at edges, peak opacity at center
+  const gradA = ctx.createLinearGradient(0, 0, W, 0);
+  gradA.addColorStop(0,   cA + '0)');
+  gradA.addColorStop(0.5, cA + '0.72)');
+  gradA.addColorStop(1,   cA + '0)');
+
+  const gradB = ctx.createLinearGradient(0, 0, W, 0);
+  gradB.addColorStop(0,   cB + '0)');
+  gradB.addColorStop(0.5, cB + '0.58)');
+  gradB.addColorStop(1,   cB + '0)');
+
+  // Draw B first (back layer), then A on top
+  ctx.globalCompositeOperation = 'lighter'; // additive blend = glow at overlap
+
+  const pathB = new Path2D(buildPath(ptsB, 7));
+  ctx.fillStyle = gradB;
+  ctx.fill(pathB);
+
+  const pathA = new Path2D(buildPath(ptsA, 5));
+  ctx.fillStyle = gradA;
+  ctx.fill(pathA);
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Baseline — 1px horizontal line, very low opacity
+  ctx.beginPath();
+  ctx.moveTo(0, CY);
+  ctx.lineTo(W, CY);
+  ctx.strokeStyle = `${cA}0.12)`;
+  ctx.lineWidth = 1;
+  if (state === 'THINKING') ctx.setLineDash([4, 8]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Diamond markers — at local maxima of ribbon A
+  drawDiamonds(ctx, ptsA, cA, ampMult);
+}
+
+function drawDiamonds(ctx, pts, color, amp) {
+  // Find local maxima: where pts[i-1].y > pts[i].y < pts[i+1].y (peak above centerline)
+  // Or: find N evenly spaced peaks for cleaner look
+  const CY = pts[Math.floor(pts.length / 2)].y; // approximate center
+  
+  ctx.fillStyle = color + '0.85)';
+  
+  let peakCount = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1].y;
+    const curr = pts[i].y;
+    const next = pts[i + 1].y;
+    const isPeak = curr < prev && curr < next; // above centerline (lower y = higher up)
+    if (!isPeak) continue;
+    if (peakCount > 12) break; // max 12 diamonds
+    
+    ctx.save();
+    ctx.translate(pts[i].x, pts[i].y);
+    ctx.rotate(Math.PI / 4); // 45° rotation = diamond shape
+    const size = 2.5 + amp * 4; // size scales with amplitude
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.restore();
+    peakCount++;
+  }
+}
+```
+
+### WaveCanvas React Component
+
+```jsx
+// WaveCanvas.jsx
+import { useRef, useEffect } from 'react';
+import { drawRibbons } from '../lib/ribbonMath';
+
+export default function WaveCanvas({ smoothed, rmsSmoothed, state }) {
+  const canvasRef = useRef(null);
+  const phaseRef = useRef(0);
+  const rafRef = useRef(null);
+
+  const phaseSpeed = {
+    IDLE: 0.008, LISTENING: 0.014, SPEAKING: 0.016,
+    THINKING: 0.007, RESPONDING: 0.022, INTERRUPTED: 0.010
+  };
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      ctx.scale(dpr, dpr);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    function draw() {
+      phaseRef.current += phaseSpeed[state] ?? 0.014;
+      drawRibbons(ctx, smoothed, rmsSmoothed, phaseRef.current, state,
+        window.innerWidth, window.innerHeight);
+      rafRef.current = requestAnimationFrame(draw);
+    }
+    rafRef.current = requestAnimationFrame(draw);
+
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      window.removeEventListener('resize', resize);
+    };
+  }, [state, smoothed, rmsSmoothed]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-screen h-screen pointer-events-none z-10"
+    />
+  );
+}
 ```
 
 ---
 
-## Voice Pipeline — Web Speech API
+## useVoice Hook — Web Speech API
 
-```javascript
-// SpeechRecognition setup:
+```js
+// useVoice.js
+// Returns: { transcript, interimTranscript, isListening, startListening, stopListening }
+
 const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
 recognition.continuous = false;
 recognition.interimResults = true;
 recognition.lang = 'en-US';
 
-// onresult: interim results → state = SPEAKING, show interim text in orb
-// final result: state = THINKING, send to /api/chat
+recognition.onresult = (event) => {
+  let interim = '';
+  let final = '';
+  for (const result of event.results) {
+    if (result.isFinal) final += result[0].transcript;
+    else interim += result[0].transcript;
+  }
+  setInterimTranscript(interim);
+  if (final) {
+    setTranscript(final);
+    onFinalTranscript(final); // → triggers THINKING state + API call
+  }
+};
 
-// Interruption detection:
-// While state === RESPONDING, if recognition fires → 
-//   trigger INTERRUPTED state → cancel TTS → restart recognition → SPEAKING
+// Interruption: if state === RESPONDING and recognition fires onstart → 
+// dispatch INTERRUPTED → cancel TTS → setState SPEAKING
 ```
 
 ---
 
-## Chat Streaming — SSE
+## useTTS Hook — SpeechSynthesis
 
-```javascript
-// POST /api/chat { message: finalTranscript }
-// Read SSE stream: parse data: {"text":"..."} chunks
-// Accumulate into responseBuffer
-// Update orb text in real time
-// On [DONE]: pass full responseBuffer to TTS
+```js
+// useTTS.js
+// Returns: { speak, cancel, isSpeaking, voices, selectedVoice, setSelectedVoice }
+
+function speak(text, onEnd) {
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.voice = selectedVoice;
+  utterance.rate = 1.05;
+  utterance.pitch = 1.0;
+  utterance.onend = () => { setIsSpeaking(false); onEnd?.(); };
+  utterance.onerror = () => { setIsSpeaking(false); onEnd?.(); };
+  setIsSpeaking(true);
+  window.speechSynthesis.speak(utterance);
+}
+
+// Voice selection: filter speechSynthesis.getVoices() for lang starting with 'en'
+// Prefer: 'Google US English', 'Samantha', 'Alex', 'Karen'
 ```
 
 ---
 
-## TTS — SpeechSynthesis
+## App.jsx — State Machine Orchestration
 
-```javascript
-// After full response received (or chunk by chunk for lower latency):
-const utterance = new SpeechSynthesisUtterance(text);
-utterance.rate = 1.05;
-utterance.pitch = 1.0;
-// Prefer a neutral US voice: filter speechSynthesis.getVoices() 
-// for lang 'en-US', name containing 'Google' or 'Samantha' or 'Alex'
-utterance.onend = () => setState('LISTENING');
-window.speechSynthesis.speak(utterance);
+```jsx
+// State flow:
+// IDLE → [mic button click] → LISTENING
+// LISTENING → [SpeechRecognition onresult interim] → SPEAKING
+// SPEAKING → [SpeechRecognition final result] → THINKING → [fetch /api/chat] → RESPONDING
+// RESPONDING → [TTS ends] → LISTENING
+// RESPONDING → [SpeechRecognition fires] → INTERRUPTED → [400ms] → SPEAKING
+
+// API call:
+async function sendToAI(transcript) {
+  setState('THINKING');
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: transcript })
+  });
+  // SSE stream:
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  setState('RESPONDING');
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value);
+    const lines = chunk.split('\n');
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6);
+      if (data === '[DONE]') { tts.speak(buffer, () => setState('LISTENING')); break; }
+      const parsed = JSON.parse(data);
+      if (parsed.text) { buffer += parsed.text; setResponseText(buffer); }
+    }
+  }
+}
 ```
 
 ---
 
-## State Panel (Bottom Row)
+## StateBadge Component (Top Left)
 
-5 cards, always visible below the main orb interface.  
-Each card: dark glassmorphism (`background: rgba(255,255,255,0.04)`, `backdrop-filter: blur(12px)`, `border: 1px solid rgba(255,255,255,0.08)`, border-radius 16px).  
-Label: uppercase, 11px, DM Mono, color-coded per state.  
-Mini waveform: small canvas (160×48px) playing the same animation as the main orb would in that state — looping always, no audio input needed.  
-Clicking a card forces that state (useful for dev/demo).  
-The active state card: ring highlight border `2px solid` in state color.
+```jsx
+// Pill badge: "● State Label"
+// Dark glass bg, colored dot, mono text
+// Framer Motion layout animation on text change
+// Position: absolute top-6 left-6 z-50
 
----
-
-## Settings Panel (Gear Icon)
-
-Slide-in panel from right, `width: 300px`.  
-Options:
-- **Voice:** dropdown to select TTS voice (populated from `speechSynthesis.getVoices()`)
-- **Mic sensitivity:** slider → maps to AnalyserNode gain
-- **Orb size:** slider 300–540px
-- **Theme:** toggle Light / Dark (dark is default)
-- **Reset conversation:** button → POST /api/new
-
----
-
-## Layout
-
-```
-body: 100vw 100vh, #000000, overflow hidden
-  ├── canvas#orb-canvas         (Three.js, position absolute, full screen)
-  ├── canvas#wave-canvas        (2D waveform overlay, position absolute, full width, 160px tall, vertically centered)
-  ├── div#hud                   (position absolute, full screen, pointer-events none except children)
-  │   ├── div#state-badge       (top: 24px, left: 28px)
-  │   ├── div#orb-text          (absolutely centered, text-align center)
-  │   └── button#settings-btn   (top: 20px, right: 24px)
-  ├── button#mic-btn            (position absolute, bottom: 180px, centered, 56px circle)
-  ├── div#state-panel           (position absolute, bottom: 0, full width, height 180px, flex row)
-  └── div#settings-panel        (position fixed, right: -320px, top: 0, height 100%, transition)
+<motion.div
+  layout
+  className="absolute top-6 left-6 z-50 flex items-center gap-2 
+             px-3 py-1.5 rounded-full border"
+  style={{
+    background: 'rgba(0,0,0,0.6)',
+    backdropFilter: 'blur(12px)',
+    borderColor: `${STATE_COLORS[state]}33`,
+  }}
+>
+  <motion.span
+    className="w-2 h-2 rounded-full"
+    animate={{ backgroundColor: STATE_COLORS[state] }}
+    // Pulse animation on active states
+    transition={{ duration: 0.3 }}
+  />
+  <span className="text-[11px] font-mono uppercase tracking-widest text-white/70">
+    {STATE_LABELS[state]}
+  </span>
+</motion.div>
 ```
 
 ---
 
-## Performance Targets (Render Hobby Tier — Be Efficient)
+## StatePanel — Bottom 5 Cards
 
-- 60fps on mid-range laptop
-- Three.js scene: 1 mesh (torus) + 3 ring meshes + bloom pass. That's it. No particles, no extra geometry.
-- Waveform canvas: requestAnimationFrame, no setInterval
-- DO NOT load three.js twice — import once from CDN as ES module
-- Audio AnalyserNode: fftSize 2048 max
-- All animations: GSAP tweens, not manual lerp in rAF loop (GSAP is more efficient)
+```jsx
+// 5 cards, full width, always visible
+// Each card has its own mini <canvas> with a looping waveform animation
+// The active state's card has a colored border
 
----
+const CARDS = [
+  { state: 'LISTENING',   label: 'Listening',    color: '#00D4FF' },
+  { state: 'SPEAKING',    label: 'You Speaking', color: '#4F8BFF' },
+  { state: 'THINKING',    label: 'Thinking',     color: '#9B7BFF' },
+  { state: 'RESPONDING',  label: 'AI Responding',color: '#E91E8C' },
+  { state: 'INTERRUPTED', label: 'Interrupted',  color: '#FF6B9D' },
+]
 
-## Color Reference
+// StateCard mini canvas animations:
+// LISTENING:    slow gentle sine, ~8px amplitude, teal, 1 diamond
+// SPEAKING:     tall bar chart style — use frequencyData bars (simulated), blue
+// THINKING:     dotted orbit — 8 dots rotating around center, purple glow center point
+// RESPONDING:   smooth double sine wave, magenta, flowing rightward
+// INTERRUPTED:  flat line with central starburst — use CSS radial gradient + canvas rays
 
-```css
---teal:    #00d4ff;
---blue:    #2b8ef0;
---purple:  #6c63ff;
---violet:  #9b59b6;
---magenta: #e91e8c;
---pink:    #ff6b9d;
---white:   #ffffff;
---text-dim: #aaaaaa;
---bg:      #000000;
---card-bg: rgba(255,255,255,0.04);
---card-border: rgba(255,255,255,0.08);
+// THINKING card mini canvas is DIFFERENT from the waveform — special case:
+function drawThinkingMini(ctx, phase, W, H) {
+  ctx.clearRect(0, 0, W, H);
+  const cx = W/2, cy = H/2;
+  // Center glow
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 12);
+  grad.addColorStop(0, 'rgba(185, 103, 255, 0.9)');
+  grad.addColorStop(1, 'rgba(185, 103, 255, 0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.fill();
+  // 8 orbiting dots
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2 + phase;
+    const x = cx + Math.cos(angle) * 20;
+    const y = cy + Math.sin(angle) * 20;
+    ctx.beginPath();
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(107, 99, 255, ${0.4 + 0.4 * Math.sin(angle + phase)})`;
+    ctx.fill();
+  }
+}
+
+// INTERRUPTED card mini canvas:
+function drawInterruptedMini(ctx, phase, W, H) {
+  ctx.clearRect(0, 0, W, H);
+  const cx = W/2, cy = H/2;
+  // Flat sine ribbons (magenta)
+  // Then starburst from center — 12 lines radiating out, length 4-18px
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2;
+    const len = 6 + (i % 3) * 6;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * len, cy + Math.sin(angle) * len);
+    ctx.strokeStyle = `rgba(255, 107, 157, ${0.4 + 0.5 * Math.abs(Math.sin(phase + i))})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  // Center hot spot
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 8);
+  grad.addColorStop(0, 'rgba(255, 107, 157, 1)');
+  grad.addColorStop(1, 'rgba(255, 107, 157, 0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2); ctx.fill();
+}
 ```
 
 ---
 
-## What Claude Code Will Handle (Do Not Touch These)
+## SettingsPanel (Slide-in from right)
 
-- `server.js` — backend API, sessions, Groq streaming
-- `package.json`
-- Deployment config / Render setup
-- `claude-ops/` folder — this is our ops channel
-
----
-
-## How to Submit Your Work
-
-1. Write all files into `public/` (create the `src/` subfolder)
-2. Log your work in `claude-ops/GROK_LOG.md`
-3. Commit: `feat(ui): [describe what you built]`
-4. Push to `main`
-5. Claude Code will review, wire up any gaps, and deploy to Render
+```jsx
+// Framer Motion: x: '100%' → x: 0 on open
+// Width 300px, full height, dark glass bg
+// Contents:
+// - Voice selector: <select> populated from speechSynthesis.getVoices() filtered to en-*
+// - Mic sensitivity: <input type="range"> → maps to gain node
+// - Orb size: <input type="range" min={300} max={540}> → CSS var --orb-size
+// - Reset conversation: <button> → POST /api/new
+// - Close button (X) top right
+```
 
 ---
 
-## Start Here
+## MicButton Component
 
-Build in this order:
-1. `public/index.html` — layout skeleton, import all modules, canvas elements
-2. `public/style.css` — dark theme, layout positioning, state panel cards, settings panel
-3. `public/src/orb.js` — Three.js scene, torus shader, bloom, concentric rings
-4. `public/src/waveform.js` — canvas 2D waveform, all 5 procedural modes
-5. `public/src/voice.js` — SpeechRecognition pipeline
-6. `public/src/chat.js` — SSE fetch streaming
-7. `public/src/tts.js` — SpeechSynthesis
-8. `public/src/main.js` — wire everything together, state machine
+```jsx
+// 56px circle, bottom-center of screen, above StatePanel
+// position: absolute bottom-[200px] left-1/2 -translate-x-1/2
+// Dark glass: bg rgba(255,255,255,0.08), border rgba(255,255,255,0.12)
+// Mic icon: heroicons or inline SVG, white, 24px
+// Active state: border glows with STATE_COLORS[state], subtle pulse
+// On click: toggles mic on/off
 
-Go.
+<motion.button
+  whileHover={{ scale: 1.05 }}
+  whileTap={{ scale: 0.95 }}
+  animate={{
+    boxShadow: isActive
+      ? `0 0 0 1px ${STATE_COLORS[state]}66, 0 0 20px ${STATE_COLORS[state]}33`
+      : '0 0 0 1px rgba(255,255,255,0.12)'
+  }}
+  className="absolute bottom-[200px] left-1/2 -translate-x-1/2 
+             w-14 h-14 rounded-full flex items-center justify-center z-50"
+  style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(16px)' }}
+>
+  {/* Mic SVG */}
+</motion.button>
+```
+
+---
+
+## Layout — App.jsx Full Structure
+
+```jsx
+// Full viewport, overflow hidden, black bg
+// Layer order (z-index):
+// z-0:  Three.js canvas (none — we dropped Three.js, not needed)
+// z-10: WaveCanvas (canvas, pointer-events-none)
+// z-20: OrbRing SVG (centered absolutely, ~420px)
+// z-30: HUD elements (StateBadge, title, gear icon)
+// z-40: MicButton
+// z-50: StatePanel (bottom)
+// z-60: SettingsPanel (slide-in, full height)
+
+return (
+  <div className="relative w-screen h-screen overflow-hidden bg-black">
+    {/* Background radial gradients */}
+    <div className="absolute inset-0 z-0" style={{
+      background: 'radial-gradient(ellipse at 50% 40%, rgba(79,139,255,0.06) 0%, transparent 60%)'
+    }}/>
+    
+    {/* Waveform wings — behind orb */}
+    <WaveCanvas smoothed={smoothed} rmsSmoothed={rmsSmoothed} state={state} />
+    
+    {/* Orb — centered */}
+    <div className="absolute inset-0 flex items-center justify-center z-20">
+      <OrbRing state={state} text1={orbText1} text2={orbText2} amplitude={rmsSmoothed} />
+    </div>
+
+    {/* Top HUD */}
+    <StateBadge state={state} />
+    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50">
+      <span className="text-[11px] font-mono tracking-[0.2em] text-white/20 uppercase">
+        Live Interface Preview
+      </span>
+    </div>
+    <button onClick={() => setSettingsOpen(true)} className="absolute top-5 right-6 z-50 ...">
+      {/* Gear SVG */}
+    </button>
+
+    {/* Mic button */}
+    <MicButton isActive={isMicOn} state={state} onToggle={toggleMic} />
+
+    {/* State panel */}
+    <StatePanel currentState={state} />
+
+    {/* Settings */}
+    <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+  </div>
+);
+```
+
+---
+
+## Tailwind Utilities to Add (tailwind.config.js)
+
+```js
+// tailwind.config.js
+export default {
+  content: ['./index.html', './src/**/*.{jsx,js}'],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['DM Sans', 'system-ui', 'sans-serif'],
+        mono: ['DM Mono', 'monospace'],
+      },
+      colors: {
+        orb: {
+          blue:    '#4F8BFF',
+          purple:  '#9B7BFF',
+          teal:    '#00D4FF',
+          magenta: '#E91E8C',
+          pink:    '#FF6B9D',
+          green:   '#10B981',
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## Build + Deploy
+
+After you build:
+```bash
+npm run build    # → produces dist/
+```
+
+Server.js already serves `dist/` in production via the static middleware addition above.
+Render runs `npm run build && node server.js` — wire that in `render.yaml` buildCommand.
+
+Commit everything to `main`. Claude Code will review and deploy.
+
+---
+
+## Log Your Work
+
+After each session append to `claude-ops/GROK_LOG.md`:
+```
+## [DATE] — [What you built]
+Files created/modified:
+What works:
+What needs Claude Code review:
+```
+
+---
+
+## Priority Order
+
+1. `index.html` + `vite.config.js` + `tailwind.config.js` — scaffold
+2. `src/lib/ribbonMath.js` — waveform math, test it standalone first
+3. `src/hooks/useAudio.js` — mic + AnalyserNode
+4. `src/components/WaveCanvas.jsx` — connect audio to canvas
+5. `src/components/OrbRing.jsx` — SVG orb with glow filters
+6. `src/lib/stateMachine.js`
+7. `src/App.jsx` — layout + state machine wiring
+8. `src/components/StateBadge.jsx`
+9. `src/components/MicButton.jsx`
+10. `src/components/StatePanel.jsx` + `StateCard.jsx` — mini canvases last (most complex)
+11. `src/hooks/useVoice.js` + `src/hooks/useTTS.js` — voice pipeline
+12. `src/components/SettingsPanel.jsx`
+
+**Go.**
