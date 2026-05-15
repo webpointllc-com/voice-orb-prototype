@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --orb-blue:    #4F8BFF;
+  --orb-purple:  #9B7BFF;
+  --orb-teal:    #00D4FF;
+  --orb-magenta: #E91E8C;
+  --orb-pink:    #FF6B9D;
+  --orb-green:   #10B981;
+  --orb-bg:      #000000;
+  --orb-surface: rgba(255,255,255,0.04);
+  --orb-border:  rgba(255,255,255,0.08);
+  --orb-text:    #FFFFFF;
+  --orb-muted:   #888888;
+  --orb-dim:     rgba(255,255,255,0.06);
+}
+
+body {
+  background: var(--orb-bg);
+  color: var(--orb-text);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  overflow: hidden;
+  height: 100dvh;
+  width: 100dvw;
+}
