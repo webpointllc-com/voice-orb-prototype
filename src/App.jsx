@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { STATES, STATE_ORB_TEXT, canTransition } from './lib/stateMachine';
+import { STATES, STATE_ORB_TEXT, THINKING_LABELS, canTransition } from './lib/stateMachine';
 import { useAudio }   from './hooks/useAudio';
 import { useVoice }   from './hooks/useVoice';
 import WaveCanvas     from './components/WaveCanvas';
@@ -9,11 +9,13 @@ import StatePanel     from './components/StatePanel';
 import StateBadge     from './components/StateBadge';
 
 export default function App() {
-  const [state, setState]   = useState(STATES.IDLE);
-  const [response, setResp] = useState('');
-  const streamRef           = useRef(null);
-  const voiceRef            = useRef(null);
-  const interruptedRef      = useRef(false); // debounce INTERRUPTED trigger
+  const [state, setState]         = useState(STATES.IDLE);
+  const [response, setResp]       = useState('');
+  const [thinkingLabel, setThink] = useState('');
+  const streamRef                 = useRef(null);
+  const voiceRef                  = useRef(null);
+  const interruptedRef            = useRef(false); // debounce INTERRUPTED trigger
+  const thinkingTimerRef          = useRef(null);
 
   const { smoothed, rmsRef, tick, startMic, stopMic, isActive } = useAudio();
 
@@ -22,10 +24,27 @@ export default function App() {
     setState(cur => canTransition(cur, next) ? next : cur);
   }, []);
 
+  // Cycle through thinking labels while in THINKING state
+  const startThinkingCycle = useCallback(() => {
+    let idx = 0;
+    setThink(THINKING_LABELS[0]);
+    thinkingTimerRef.current = setInterval(() => {
+      idx = (idx + 1) % THINKING_LABELS.length;
+      setThink(THINKING_LABELS[idx]);
+    }, 1800);
+  }, []);
+
+  const stopThinkingCycle = useCallback(() => {
+    clearInterval(thinkingTimerRef.current);
+    thinkingTimerRef.current = null;
+    setThink('');
+  }, []);
+
   // Transcript → THINKING → chat SSE → RESPONDING → TTS → LISTENING
   const handleTranscript = useCallback(async (text) => {
     go(STATES.THINKING);
     setResp('');
+    startThinkingCycle();
     let full = '';
 
     try {
@@ -36,6 +55,7 @@ export default function App() {
       });
       if (!res.ok) throw new Error(`chat ${res.status}`);
 
+      stopThinkingCycle();
       go(STATES.RESPONDING);
       const reader = res.body.getReader();
       const dec    = new TextDecoder();
@@ -79,9 +99,10 @@ export default function App() {
       }
     } catch (err) {
       console.error('[App] chat error:', err);
+      stopThinkingCycle();
       go(STATES.ERROR);
     }
-  }, [go]);
+  }, [go, startThinkingCycle, stopThinkingCycle]);
 
   const { startListening, stopListening, checkSilence } = useVoice({
     onFinalTranscript: handleTranscript,
@@ -164,7 +185,17 @@ export default function App() {
       <div className="absolute inset-0 flex flex-col items-center justify-center z-20 gap-4">
         <OrbRing state={state} rmsRef={rmsRef} smoothed={smoothed} />
 
-        {orbText.line1 && (
+        {/* Thinking cycle label */}
+        {state === STATES.THINKING && thinkingLabel && (
+          <div className="text-center mt-2">
+            <p className="text-[18px] font-light tracking-widest text-purple-300/80 animate-pulse">
+              {thinkingLabel}
+            </p>
+          </div>
+        )}
+
+        {/* Static orb text for other states */}
+        {state !== STATES.THINKING && orbText.line1 && (
           <div className="text-center mt-2">
             <p className="text-[20px] font-medium tracking-tight">{orbText.line1}</p>
             {orbText.line2 && (
