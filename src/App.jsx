@@ -7,8 +7,10 @@ import OrbRing        from './components/OrbRing';
 import MicButton      from './components/MicButton';
 import StatePanel     from './components/StatePanel';
 import StateBadge     from './components/StateBadge';
+import AuthGate       from './components/AuthGate';
+import { saveConversation, saveBiometric, updateVoiceProfile } from './lib/db';
 
-export default function App() {
+function VoiceApp({ user, onSignOut }) {
   const [state, setState]         = useState(STATES.IDLE);
   const [response, setResp]       = useState('');
   const [thinkingLabel, setThink] = useState('');
@@ -76,6 +78,11 @@ export default function App() {
         }
       }
 
+      // Persist conversation to IndexedDB
+      if (full.trim() && user?.id) {
+        saveConversation({ userId: user.id, transcript: text, response: full, durationMs: Date.now() }).catch(() => {});
+      }
+
       // TTS — cancelled externally if INTERRUPTED
       if (full.trim()) {
         const utt  = new SpeechSynthesisUtterance(full);
@@ -108,6 +115,7 @@ export default function App() {
     onFinalTranscript: handleTranscript,
     onStateChange: go,
     rmsRef,
+    userId: user?.id,
   });
 
   useEffect(() => {
@@ -216,6 +224,31 @@ export default function App() {
 
       {/* State cards */}
       <StatePanel state={state} smoothed={smoothed} rms={rmsRef.current ?? 0} />
+
+      {/* User pill — top right */}
+      {user && (
+        <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
+          <span className="text-[11px] font-mono text-white/40 tracking-wider">
+            {user.displayName}
+          </span>
+          <button
+            onClick={onSignOut}
+            className="text-[10px] font-mono text-white/20 hover:text-white/50 transition-colors tracking-widest uppercase"
+          >
+            sign out
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthGate>
+      {({ user, onSignOut }) => (
+        <VoiceApp user={user} onSignOut={onSignOut} />
+      )}
+    </AuthGate>
   );
 }

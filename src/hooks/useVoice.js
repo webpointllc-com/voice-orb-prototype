@@ -1,11 +1,13 @@
 import { useRef, useCallback } from 'react';
+import { saveBiometric, saveRecording, updateVoiceProfile } from '../lib/db';
 
 /**
  * useVoice.js — MediaRecorder + Whisper pipeline
  * Replaces Web SpeechRecognition with real Whisper via /api/transcribe
  * Merged: Grok's biometric POST + Claude's mimeType fallback, isRecordingRef, stopListening
+ * IndexedDB: saves biometric + recording per session when userId provided
  */
-export function useVoice({ onFinalTranscript, onStateChange, rmsRef }) {
+export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
   const mediaRecorderRef = useRef(null);
   const chunksRef        = useRef([]);
   const silenceTimerRef  = useRef(null);
@@ -59,16 +61,21 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef }) {
 
       if (blob.size < 1000) return; // too short, skip
 
-      // Biometric snapshot
+      // Biometric snapshot — backend + IndexedDB
+      const bioPayload = {
+        sessionId:   sessionIdRef.current,
+        rmsHistory:  rmsHistoryRef.current,
+        duration_ms: rmsHistoryRef.current.length * 100,
+      };
       fetch('/api/biometric', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId:   sessionIdRef.current,
-          rmsHistory:  rmsHistoryRef.current,
-          duration_ms: rmsHistoryRef.current.length * 100,
-        }),
+        body: JSON.stringify(bioPayload),
       }).catch(() => {});
+      if (userId) {
+        saveBiometric({ userId, sessionId: bioPayload.sessionId, rmsHistory: bioPayload.rmsHistory, durationMs: bioPayload.duration_ms }).catch(() => {});
+        updateVoiceProfile(userId, rmsHistoryRef.current.slice(-20)).catch(() => {});
+      }
 
       // Transcribe via main service (routes to whisper-service or Groq fallback)
       try {
@@ -76,8 +83,13 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef }) {
         fd.append('audio', blob, 'audio.webm');
         const res  = await fetch('/api/transcribe', { method: 'POST', body: fd });
         const data = await res.json();
-        if (data.text?.trim()) {
-          onFinalTranscript(data.text.trim());
+        const transcript = data.text?.trim();
+        // Save recording blob + transcript to IndexedDB
+        if (userId && transcript) {
+          saveRecording({ userId, sessionId: sessionIdRef.current, audioBlob: blob, transcript }).catch(() => {});
+        }
+        if (transcript) {
+          onFinalTranscript(transcript);
         }
       } catch (err) {
         console.error('[useVoice] transcribe error:', err);
