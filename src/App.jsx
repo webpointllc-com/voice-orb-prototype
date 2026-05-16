@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { STATES, STATE_ORB_TEXT, THINKING_LABELS, canTransition } from './lib/stateMachine';
 import { useAudio }   from './hooks/useAudio';
 import { useVoice }   from './hooks/useVoice';
@@ -8,7 +9,7 @@ import MicButton      from './components/MicButton';
 import StatePanel     from './components/StatePanel';
 import StateBadge     from './components/StateBadge';
 import AuthGate       from './components/AuthGate';
-import { saveConversation, saveBiometric, updateVoiceProfile } from './lib/db';
+import { saveConversation } from './lib/db';
 
 function VoiceApp({ user, onSignOut }) {
   const [state, setState]         = useState(STATES.IDLE);
@@ -212,11 +213,20 @@ function VoiceApp({ user, onSignOut }) {
           </div>
         )}
 
-        {response && (
-          <p className="max-w-sm text-center text-white/75 text-sm leading-relaxed px-6">
-            {response}
-          </p>
-        )}
+        <AnimatePresence mode="wait">
+          {response && (
+            <motion.p
+              key="response"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="max-w-sm text-center text-white/75 text-sm leading-relaxed px-6"
+            >
+              {response}
+            </motion.p>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Mic button */}
