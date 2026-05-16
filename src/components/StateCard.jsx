@@ -1,48 +1,61 @@
 import { useRef, useEffect } from 'react';
+import { drawRibbons, drawThinkingMini } from '../lib/ribbonMath';
+import { STATE_AMP_MULT, STATE_PHASE_SPEED } from '../lib/stateMachine';
 
 /**
- * StateCard.jsx
- * Individual state card with mini looping waveform
+ * StateCard.jsx — mini ribbon canvas per state
+ * THINKING uses drawThinkingMini (orbiting dots), all others use drawRibbons
  */
-export default function StateCard({ label, color, isActive }) {
+export default function StateCard({ label, color, isActive, state }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    let frame = 0;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    let phase = 0;
     let raf;
 
+    // Dummy frequency data for mini card
+    const dummySmoothed = new Float32Array(64).fill(isActive ? 0.35 : 0.08);
+    const phaseSpeed    = STATE_PHASE_SPEED[state] ?? 0.01;
+
     const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = isActive ? color : '#555';
-      ctx.lineWidth = 1.5;
+      const W = canvas.width;
+      const H = canvas.height;
 
-      ctx.beginPath();
-      for (let x = 0; x < canvas.width; x += 3) {
-        const y = canvas.height / 2 + Math.sin((x + frame) * 0.08) * 12 * (isActive ? 1 : 0.3);
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      if (state === 'THINKING') {
+        drawThinkingMini(ctx, phase, W, H);
+      } else {
+        drawRibbons(ctx, dummySmoothed, isActive ? 0.3 : 0.05, phase, state, W, H);
       }
-      ctx.stroke();
 
-      frame += 1.2;
+      phase += phaseSpeed;
       raf = requestAnimationFrame(draw);
     };
 
     draw();
     return () => cancelAnimationFrame(raf);
-  }, [isActive, color]);
+  }, [isActive, state]);
 
   return (
-    <div className={`p-4 rounded-2xl border transition-all ${isActive ? 'border-white/40 bg-white/5' : 'border-white/10 bg-white/3'}`}>
-      <div className="text-[10px] font-mono tracking-[1px] mb-2" style={{ color: isActive ? color : '#888' }}>
+    <div
+      className={`p-3 rounded-2xl border transition-all duration-300 ${
+        isActive ? 'border-white/40 bg-white/5' : 'border-white/10 bg-transparent'
+      }`}
+    >
+      <div
+        className="text-[9px] font-mono tracking-[1.5px] mb-2 uppercase"
+        style={{ color: isActive ? color : '#555' }}
+      >
         {label}
       </div>
-      <canvas ref={canvasRef} width={150} height={50} className="w-full" />
-      <div className="text-right text-white/30 mt-1">
-        <span className="text-[10px]">···</span>
-      </div>
+      <canvas ref={canvasRef} width={150} height={48} className="w-full rounded" />
+      {isActive && (
+        <div className="flex justify-end mt-1">
+          <span className="text-[9px] font-mono" style={{ color }}>●</span>
+        </div>
+      )}
     </div>
   );
 }

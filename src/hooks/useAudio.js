@@ -45,6 +45,7 @@ export function useAudio() {
       setIsActive(true);
       setPermission('granted');
       setError(null);
+      return stream; // caller needs stream for MediaRecorder
     } catch (err) {
       const name = err?.name;
       setIsActive(false);

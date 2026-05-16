@@ -1,28 +1,21 @@
 import StateCard from './StateCard';
-import { STATES } from '../lib/stateMachine';
+import { STATES, STATE_COLORS, STATE_LABELS, STATE_CARD_ORDER } from '../lib/stateMachine';
 
 /**
- * StatePanel.jsx
- * Bottom row of 5 state cards
+ * StatePanel.jsx — bottom row of state cards
+ * Receives state prop (matches App.jsx usage)
  */
-export default function StatePanel({ currentState }) {
-  const states = [
-    { key: STATES.LISTENING, label: 'LISTENING', color: '#00D4FF' },
-    { key: STATES.THINKING, label: 'THINKING', color: '#9B7BFF' },
-    { key: STATES.RESPONDING, label: 'RESPONDING', color: '#E91E8C' },
-    { key: STATES.SPEAKING, label: 'SPEAKING', color: '#4F8BFF' },
-    { key: STATES.IDLE, label: 'IDLE', color: '#888888' },
-  ];
-
+export default function StatePanel({ state, smoothed, rms }) {
   return (
-    <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 w-[92%] max-w-[1100px]">
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 w-[94%] max-w-[1100px]">
       <div className="grid grid-cols-5 gap-3">
-        {states.map(({ key, label, color }) => (
-          <StateCard 
-            key={key} 
-            label={label} 
-            color={color} 
-            isActive={currentState === key} 
+        {STATE_CARD_ORDER.map((s) => (
+          <StateCard
+            key={s}
+            label={STATE_LABELS[s]}
+            color={STATE_COLORS[s]}
+            isActive={state === s}
+            state={s}
           />
         ))}
       </div>
