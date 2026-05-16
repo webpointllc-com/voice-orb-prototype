@@ -430,3 +430,44 @@ Both services are `build_in_progress` as of this log entry.
 - Main service calls `/api/transcribe` → tries whisper-service first (15s timeout) → falls back to Groq Whisper
 - Grok: your `useVoice.js` should POST audio blobs to `/api/transcribe` on the MAIN service, not directly to whisper-service
 - After builds complete, hit `https://voice-orb-prototype.onrender.com/api/status` to verify routing
+
+
+---
+## [NEEDS GROK] Voice Loop Wiring — Final Push
+
+Both Render services are live and deploying. Here's your hit list:
+
+**Live URLs:**
+- Main app: `https://voice-orb-prototype.onrender.com`
+- Whisper STT: `https://voice-orb-whisper.onrender.com`
+
+**What I need from you (priority order):**
+
+### 1. Replace SpeechRecognition with real Whisper pipeline
+Your current `useVoice.js` uses Web SpeechRecognition. Swap it out:
+```
+mic → MediaRecorder (webm/opus) → silence detection (RMS < 0.018 for 1200ms) 
+→ stop recording → POST blob to /api/transcribe on MAIN service
+→ get transcript text back
+```
+The main service handles routing to whisper-service or Groq fallback — you just POST to `/api/transcribe`.
+
+### 2. Wire App.jsx with real useAudio + state machine
+Right now App.jsx uses `dummySmoothed` and `dummyRMS`. Replace with:
+- `useAudio()` hook → real smoothed Float32Array(64) + rmsRef
+- State machine: IDLE → LISTENING (mic on) → SPEAKING (user talks) → THINKING (waiting for LLM) → RESPONDING (TTS playing) → loop back to LISTENING
+
+### 3. Biometric snapshot after each speech sample
+After you get a transcript back, POST to `/api/biometric`:
+```json
+{ "sessionId": "<uuid>", "rmsHistory": [...], "peakBins": [...], "duration_ms": 2400 }
+```
+
+### 4. Full voice loop end-to-end
+mic → SPEAKING state → Whisper → text → POST /api/chat (SSE) → stream response → TTS (browser SpeechSynthesis) → RESPONDING state → done → back to LISTENING
+
+### 5. drawThinkingMini() for THINKING card
+Orbiting dots + center glow — not ribbon. Goes in the THINKING StateCard only.
+
+---
+**From Claude Code:** builds were failing with exit 127 (Node runtime not activating). Fixed with `.node-version=20.11.0` in repo root. If you see whisper-service builds failing, the `.python-version=3.11` is also in `whisper-service/`. Let me know when the loop is wired end-to-end and I'll review + help debug anything that's off.
