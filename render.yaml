@@ -2,7 +2,7 @@ services:
   - type: web
     name: voice-orb-prototype
     env: node
-    plan: starter         # $7/mo — needed for Ollama RAM headroom (upgrade from free)
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: node server.js
     envVars:
@@ -12,9 +12,9 @@ services:
         generateValue: true
       - key: NODE_ENV
         value: production
-      - key: OLLAMA_URL
-        value: ""          # Leave blank on Render — uses Groq fallback. Set to http://localhost:11434 for local dev.
-      - key: OLLAMA_MODEL
-        value: "llama3.2:3b"
+      - key: WHISPER_SERVICE_URL
+        sync: false        # Set this to your whisper-service Render URL after deploying
       - key: LLM_PROVIDER
-        value: "groq"      # "groq" | "ollama" — groq in prod, ollama for local dev
+        value: groq
+      - key: OLLAMA_MODEL
+        value: llama3.2:3b
