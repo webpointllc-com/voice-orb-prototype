@@ -3,12 +3,6 @@ import { motion } from 'framer-motion';
 import { STATE_PHASE_SPEED } from '../lib/stateMachine';
 import { drawOrbDots } from '../lib/ribbonMath';
 
-/**
- * OrbRing.jsx — Grok's glass orb design + Claude's canvas dot ring + rms reactivity
- * Best of both: glassmorphic 3D orb shell (Grok) + reactive audio dot ring (Claude)
- * State names match stateMachine.js: LISTENING, SPEAKING, THINKING, RESPONDING, INTERRUPTED, ERROR, IDLE
- */
-
 const GLOW_COLORS = {
   IDLE:        '#555555',
   LISTENING:   '#00D4FF',
@@ -36,11 +30,15 @@ export default function OrbRing({ state, rmsRef, smoothed }) {
   const isActive    = !['IDLE', 'ERROR'].includes(state);
   const rms         = rmsRef?.current ?? 0;
 
-  // RMS-driven glow intensity
-  const glowSize    = 80 + rms * 120;
-  const glowOpacity = 0.55 + rms * 0.45;
+  // Siri-grade dynamic glow per state
+  let glowSize = 80 + rms * 120;
+  let glowOpacity = 0.55 + rms * 0.45;
 
-  // Canvas dot ring — reactive audio overlay
+  if (state === 'SPEAKING') { glowSize = 100 + rms * 145; glowOpacity = 0.7 + rms * 0.5; }
+  if (state === 'RESPONDING') { glowSize = 88 + rms * 115; glowOpacity = 0.62 + rms * 0.42; }
+  if (state === 'THINKING') { glowSize = 78 + rms * 100; glowOpacity = 0.52 + rms * 0.38; }
+  if (state === 'ERROR') { glowSize = 130; glowOpacity = 0.95; }
+
   const canvasRef   = useRef(null);
   const phaseRef    = useRef(0);
   const stateRef    = useRef(state);
@@ -78,24 +76,20 @@ export default function OrbRing({ state, rmsRef, smoothed }) {
       animate={{ scale: 1, opacity: 1 }}
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
     >
-      {/* Subtle outer sonar rings */}
       <div className="absolute w-[340px] h-[340px] rounded-full border border-white/10 pointer-events-none" />
       <div className="absolute w-[300px] h-[300px] rounded-full border border-white/10 pointer-events-none" />
 
-      {/* Main glass orb — Grok's design */}
       <div
         className="w-[240px] h-[240px] rounded-full relative"
         style={{
           background: 'radial-gradient(circle at 35% 30%, #ffffff33, transparent 65%), linear-gradient(145deg, #1a1a2e, #0f0f1a)',
           boxShadow: `0 0 ${glowSize}px ${glow}${Math.round(glowOpacity * 99).toString(16).padStart(2,'0')}, inset 50px 50px 80px rgba(255,255,255,0.12), inset -50px -50px 80px rgba(0,0,0,0.7)`,
-          transition: 'box-shadow 0.15s ease-out',
+          transition: 'box-shadow 0.12s ease-out',
         }}
       >
-        {/* Inner highlight */}
         <div className="absolute inset-0 bg-gradient-to-br from-white/25 via-transparent to-transparent rounded-full" />
       </div>
 
-      {/* Canvas dot ring — reactive audio overlay (sits on top of glass orb) */}
       <canvas
         ref={canvasRef}
         width={ORB_SIZE}
@@ -104,7 +98,6 @@ export default function OrbRing({ state, rmsRef, smoothed }) {
         style={{ mixBlendMode: 'screen' }}
       />
 
-      {/* Center inner glow pulse when active */}
       {isActive && (
         <motion.div
           className="absolute rounded-full pointer-events-none"
