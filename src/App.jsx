@@ -126,7 +126,7 @@ export default function App() {
       <WaveCanvas
         state={state}
         smoothed={smoothed}
-        rms={rmsRef.current ?? 0}
+        rmsRef={rmsRef}
         tick={fullTick}
         isActive={isActive}
       />

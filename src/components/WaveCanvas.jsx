@@ -1,44 +1,46 @@
 import { useRef, useEffect } from 'react';
 import { drawRibbons } from '../lib/ribbonMath';
+import { STATE_PHASE_SPEED } from '../lib/stateMachine';
 
 /**
- * WaveCanvas.jsx
- * Full-width ribbon waveform using drawRibbons from ribbonMath.js
- * Wires useAudio tick() into rAF loop.
+ * WaveCanvas.jsx — full-width ribbon waveform
+ * smoothed: Float32Array(64) mutated in place by tick() — always current
+ * rmsRef: ref passed from useAudio — always current (no stale closure)
  */
-export default function WaveCanvas({ state, smoothed, rms, tick, isActive }) {
-  const canvasRef = useRef(null);
-  const phaseRef = useRef(0);
+export default function WaveCanvas({ state, smoothed, rmsRef, tick, isActive }) {
+  const canvasRef  = useRef(null);
+  const phaseRef   = useRef(0);
+  const stateRef   = useRef(state);
+  const smoothedRef = useRef(smoothed);
+
+  // Keep refs current so the rAF loop always sees latest values
+  useEffect(() => { stateRef.current   = state;   }, [state]);
+  useEffect(() => { smoothedRef.current = smoothed; }, [smoothed]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d', { alpha: true });
     let rafId;
 
     const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = 220; // matches design intent
+      canvas.width  = window.innerWidth;
+      canvas.height = 220;
     };
-
     resize();
     window.addEventListener('resize', resize);
 
     const loop = () => {
-      if (tick) tick();
+      if (tick) tick(); // updates smoothedRef in place + rmsRef.current
 
-      const W = canvas.width;
-      const H = canvas.height;
-      const currentRMS = rms ?? 0;
+      const W   = canvas.width;
+      const H   = canvas.height;
+      const s   = stateRef.current;
+      const rms = rmsRef?.current ?? 0;
+      const spd = STATE_PHASE_SPEED[s] ?? 0.012;
 
-      // Advance phase based on state for different "feels"
-      const phaseSpeed = state === 'LISTENING' ? 0.028 : 
-                        state === 'SPEAKING' ? 0.035 : 
-                        state === 'THINKING' ? 0.018 : 0.022;
-      phaseRef.current += phaseSpeed;
-
-      drawRibbons(ctx, smoothed || new Float32Array(64), currentRMS, phaseRef.current, state, W, H);
+      phaseRef.current += spd;
+      drawRibbons(ctx, smoothedRef.current || new Float32Array(64), rms, phaseRef.current, s, W, H);
 
       rafId = requestAnimationFrame(loop);
     };
@@ -49,7 +51,7 @@ export default function WaveCanvas({ state, smoothed, rms, tick, isActive }) {
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', resize);
     };
-  }, [state, smoothed, rms, tick]);
+  }, [tick, rmsRef]); // only restart if tick/rmsRef change — state + smoothed via refs
 
   return (
     <canvas
