@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'framer-motion';
 
 export default function OrbRing({ state = 'LISTENING' }) {
   const glowColors = {
@@ -12,7 +13,13 @@ export default function OrbRing({ state = 'LISTENING' }) {
   const glow = glowColors[state] || '#3b82f6';
 
   return (
-    <div className="relative flex items-center justify-center w-[280px] h-[280px]">
+    <motion.div 
+      className="relative flex items-center justify-center w-[280px] h-[280px]"
+      key={state}
+      initial={{ scale: 0.96, opacity: 0.85 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+    >
       {/* Subtle outer rings */}
       <div className="absolute w-[340px] h-[340px] rounded-full border border-white/10" />
       <div className="absolute w-[300px] h-[300px] rounded-full border border-white/10" />
@@ -62,6 +69,6 @@ export default function OrbRing({ state = 'LISTENING' }) {
           {state === 'AI_RESPONDING' && "One moment"}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
