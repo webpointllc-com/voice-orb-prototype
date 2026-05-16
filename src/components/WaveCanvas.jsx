@@ -6,7 +6,7 @@ export default function WaveCanvas({ state = 'LISTENING', rms = 0.25 }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: true });
     let raf;
 
     const draw = () => {
@@ -18,18 +18,20 @@ export default function WaveCanvas({ state = 'LISTENING', rms = 0.25 }) {
       ctx.strokeStyle = state === 'AI_RESPONDING' ? '#ec4899' :
                        state === 'THINKING' ? '#a855f7' :
                        state === 'YOU_SPEAKING' ? '#3b82f6' : '#60a5fa';
-      ctx.lineWidth = 2.8;
+      ctx.lineWidth = 2.6;
       ctx.shadowColor = ctx.strokeStyle;
-      ctx.shadowBlur = 22;
+      ctx.shadowBlur = 26;
 
       ctx.beginPath();
-      const points = 52;
-      const amp = (state === 'YOU_SPEAKING' ? 32 : 18) * (0.7 + rms * 0.9);
+      const points = 56;
+      const baseAmp = state === 'YOU_SPEAKING' ? 34 : 19;
+      const amp = baseAmp * (0.65 + rms * 1.1);
 
       for (let i = 0; i <= points; i++) {
         const x = (i / points) * w;
-        const wave = Math.sin((i * 0.85) + (Date.now() / 160)) * amp;
-        const yPos = y + wave * (i % 4 === 0 ? 1.15 : 0.95);
+        const phase = (i * 0.78) + (Date.now() / 145);
+        const wave = Math.sin(phase) * amp * (1 + Math.sin(phase * 0.4) * 0.25);
+        const yPos = y + wave * (i % 5 === 0 ? 1.12 : 0.96);
         if (i === 0) ctx.moveTo(x, yPos);
         else ctx.lineTo(x, yPos);
       }
