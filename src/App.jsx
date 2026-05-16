@@ -8,8 +8,9 @@ import OrbRing        from './components/OrbRing';
 import MicButton      from './components/MicButton';
 import StatePanel     from './components/StatePanel';
 import StateBadge     from './components/StateBadge';
-import AuthGate       from './components/AuthGate';
-import { saveConversation } from './lib/db';
+import AuthGate              from './components/AuthGate';
+import ConversationHistory   from './components/ConversationHistory';
+import { saveConversation }  from './lib/db';
 
 function VoiceApp({ user, onSignOut }) {
   const [state, setState]         = useState(STATES.IDLE);
@@ -234,6 +235,9 @@ function VoiceApp({ user, onSignOut }) {
 
       {/* State cards */}
       <StatePanel state={state} smoothed={smoothed} rms={rmsRef.current ?? 0} />
+
+      {/* Conversation history — slide-up from bottom-left */}
+      <ConversationHistory userId={user?.id} />
 
       {/* User pill — top right */}
       {user && (
