@@ -34,16 +34,17 @@ export function drawRibbons(ctx, smoothed, rmsSmoothed, phase, state, W, H) {
     const t = i / PTS;
     const x = t * W;
     const env = Math.sin(t * Math.PI); // THE ENVELOPE — do not touch
+    // Reference wave: floor(t*60) bin mapping, (0.4 + mag*1.4) amplitude curve
     const bin = Math.min(63, Math.floor(t * 60));
     const mag = ((smoothed[bin] ?? 0) + 0.04) * ampMult;
 
     ptsA.push({ x, y: CY
-      + Math.sin(t * Math.PI * 2.0 + phase * 1.20)       * 22 * env * (0.30 + mag * 1.65)
-      + Math.sin(t * Math.PI * 4.3 + phase * 0.70 + 0.9) *  9 * env * (0.20 + mag * 0.90) });
+      + Math.sin(t * Math.PI * 2.0 + phase * 1.20)       * 22 * env * (0.40 + mag * 1.40)
+      + Math.sin(t * Math.PI * 4.3 + phase * 0.70 + 0.9) *  9 * env * (0.20 + mag * 0.80) });
 
     ptsB.push({ x, y: CY
-      + Math.sin(t * Math.PI * 2.4 + phase * 0.90 + 1.2) * 24 * env * (0.30 + mag * 1.45)
-      + Math.sin(t * Math.PI * 3.8 + phase * 1.40 + 2.1) *  8 * env * (0.18 + mag * 0.80) });
+      + Math.sin(t * Math.PI * 2.4 + phase * 0.90 + 1.2) * 24 * env * (0.40 + mag * 1.20)
+      + Math.sin(t * Math.PI * 3.8 + phase * 1.40 + 2.1) *  8 * env * (0.18 + mag * 0.70) });
   }
 
   function buildPath(pts, flatH) {
@@ -131,6 +132,40 @@ export function calcRMS(timeDomainData) {
     sum += v * v;
   }
   return Math.sqrt(sum / timeDomainData.length);
+}
+
+/**
+ * drawOrbDots — reactive dot ring on the orb (reference: Workplace Technologies HTML)
+ * Dots orbit at baseR, pulse outward with audio mag + breath oscillation.
+ * Call on a canvas overlay on top of the SVG orb ring.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Float32Array} smoothed  — 64-bin frequency data
+ * @param {number} phase           — running phase from rAF loop
+ * @param {number} W, H            — canvas dimensions
+ * @param {string} color           — e.g. 'rgba(79,139,255,'
+ */
+export function drawOrbDots(ctx, smoothed, phase, W, H, color = 'rgba(79,139,255,') {
+  ctx.clearRect(0, 0, W, H);
+  const cx = W / 2, cy = H / 2;
+  const baseR  = Math.min(W, H) * 0.43; // ~73% of orb radius
+  const count  = Math.min(96, Math.max(48, Math.floor(W / 4)));
+
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const fbin  = Math.min(63, Math.floor((i / count) * 50) + 2);
+    const mag   = smoothed[fbin] ?? 0;
+    const breath = Math.sin(phase * 1.4 + i * 0.07) * 0.5;
+    const r  = baseR + mag * 22 + breath;
+    const x  = cx + Math.cos(angle) * r;
+    const y  = cy + Math.sin(angle) * r;
+    const op = (0.35 + mag * 0.55).toFixed(2);
+    const sz = (1.4 + mag * 1.4).toFixed(2);
+
+    ctx.beginPath();
+    ctx.arc(x, y, parseFloat(sz), 0, Math.PI * 2);
+    ctx.fillStyle = color + op + ')';
+    ctx.fill();
+  }
 }
 
 /**

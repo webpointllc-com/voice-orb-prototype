@@ -133,7 +133,7 @@ export default function App() {
 
       {/* Center: orb + text + response */}
       <div className="absolute inset-0 flex flex-col items-center justify-center z-20 gap-4">
-        <OrbRing state={state} rms={rmsRef.current ?? 0} />
+        <OrbRing state={state} rmsRef={rmsRef} smoothed={smoothed} />
 
         {orbText.line1 && (
           <div className="text-center mt-2">

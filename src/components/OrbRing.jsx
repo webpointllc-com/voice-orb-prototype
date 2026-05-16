@@ -1,20 +1,70 @@
+import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { STATE_COLORS, STATE_GLOW, STATE_ORB_TEXT } from '../lib/stateMachine';
+import { STATE_COLORS, STATE_GLOW, STATE_PHASE_SPEED } from '../lib/stateMachine';
+import { drawOrbDots } from '../lib/ribbonMath';
 
 /**
- * OrbRing.jsx — glowing SVG ring, state-aware colors + glow
+ * OrbRing.jsx — glowing SVG ring + reactive dot ring canvas overlay
+ * smoothed: Float32Array(64) mutated in place — always current in rAF loop
+ * rmsRef:   React ref — always current (no stale closure)
  */
-export default function OrbRing({ state, rms }) {
-  const color   = STATE_COLORS[state]   ?? '#555555';
-  const glow    = STATE_GLOW[state]     ?? 6;
-  const orbText = STATE_ORB_TEXT[state] ?? { line1: '', line2: '' };
-  const isActive = !['IDLE', 'ERROR'].includes(state);
 
-  // RMS-driven ring distortion (subtle strokeWidth pulse)
-  const strokeW = 2.5 + (rms ?? 0) * 6;
+const STATE_DOT_RGBA = {
+  IDLE:        'rgba(85,85,85,',
+  LISTENING:   'rgba(0,212,255,',
+  SPEAKING:    'rgba(79,139,255,',
+  THINKING:    'rgba(155,123,255,',
+  RESPONDING:  'rgba(233,30,140,',
+  INTERRUPTED: 'rgba(255,107,157,',
+  ERROR:       'rgba(239,68,68,',
+};
+
+const ORB_SIZE = 340;
+
+export default function OrbRing({ state, rmsRef, smoothed }) {
+  const color     = STATE_COLORS[state]   ?? '#555555';
+  const glow      = STATE_GLOW[state]     ?? 6;
+  const isActive  = !['IDLE', 'ERROR'].includes(state);
+
+  // RMS-driven ring stroke pulse (read from ref to stay current)
+  const rms = rmsRef?.current ?? 0;
+  const strokeW = 2.5 + rms * 6;
+
+  // Canvas overlay — reactive dot ring
+  const canvasRef  = useRef(null);
+  const phaseRef   = useRef(0);
+  const stateRef   = useRef(state);
+  const smoothedRef = useRef(smoothed);
+
+  useEffect(() => { stateRef.current   = state;   }, [state]);
+  useEffect(() => { smoothedRef.current = smoothed; }, [smoothed]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width  = ORB_SIZE;
+    canvas.height = ORB_SIZE;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    let rafId;
+
+    const loop = () => {
+      const s    = stateRef.current;
+      const spd  = STATE_PHASE_SPEED[s] ?? 0.012;
+      phaseRef.current += spd;
+
+      const dotColor = STATE_DOT_RGBA[s] ?? STATE_DOT_RGBA.LISTENING;
+      const sm = smoothedRef.current || new Float32Array(64);
+      drawOrbDots(ctx, sm, phaseRef.current, ORB_SIZE, ORB_SIZE, dotColor);
+
+      rafId = requestAnimationFrame(loop);
+    };
+
+    loop();
+    return () => cancelAnimationFrame(rafId);
+  }, []); // stable loop — reads state/smoothed via refs
 
   return (
-    <div className="relative flex items-center justify-center" style={{ width: 340, height: 340 }}>
+    <div className="relative flex items-center justify-center" style={{ width: ORB_SIZE, height: ORB_SIZE }}>
 
       {/* Outer glow corona */}
       <motion.div
@@ -28,7 +78,7 @@ export default function OrbRing({ state, rms }) {
       />
 
       {/* SVG ring */}
-      <svg width="340" height="340" className="absolute">
+      <svg width={ORB_SIZE} height={ORB_SIZE} className="absolute">
         <defs>
           <linearGradient id="orbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor={color} />
@@ -47,7 +97,7 @@ export default function OrbRing({ state, rms }) {
         {[1, 2, 3].map((i) => (
           <circle
             key={i}
-            cx="170" cy="170"
+            cx={ORB_SIZE / 2} cy={ORB_SIZE / 2}
             r={130 + i * 16}
             fill="none"
             stroke={color}
@@ -58,16 +108,25 @@ export default function OrbRing({ state, rms }) {
 
         {/* Main ring */}
         <motion.circle
-          cx="170" cy="170" r="130"
+          cx={ORB_SIZE / 2} cy={ORB_SIZE / 2} r="130"
           fill="none"
           stroke="url(#orbGrad)"
           strokeWidth={strokeW}
           strokeLinecap="round"
           filter="url(#glow)"
-          animate={{ r: 130 + (rms ?? 0) * 8 }}
+          animate={{ r: 130 + rms * 8 }}
           transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         />
       </svg>
+
+      {/* Reactive dot ring — canvas overlay */}
+      <canvas
+        ref={canvasRef}
+        width={ORB_SIZE}
+        height={ORB_SIZE}
+        className="absolute inset-0 pointer-events-none"
+        style={{ mixBlendMode: 'screen' }}
+      />
 
       {/* Center inner glow pulse when active */}
       {isActive && (
