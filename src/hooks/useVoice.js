@@ -1,65 +1,76 @@
-import { useState, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 
 /**
- * useVoice.js
- * Handles SpeechRecognition (Web Speech API) + audio recording prep
- * For production, replace with real Whisper via backend
+ * useVoice.js — Whisper version (MediaRecorder + silence detection)
+ * Replaces Web SpeechRecognition per Claude's spec
+ * Posts audio blob to /api/transcribe on main service (routes to whisper-service or Groq fallback)
  */
-export function useVoice() {
-  const [transcript, setTranscript] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef(null);
+export function useVoice({ onFinalTranscript, rmsRef }) {
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const silenceTimerRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  const rmsHistoryRef = useRef([]);
 
-  const startListening = useCallback(() => {
-    if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
-      alert('SpeechRecognition not supported in this browser');
-      return;
+  const checkSilence = useCallback((rms) => {
+    if (rms < 0.018) {
+      if (!silenceTimerRef.current) {
+        silenceTimerRef.current = setTimeout(() => {
+          if (mediaRecorderRef.current?.state === 'recording') {
+            mediaRecorderRef.current.stop();
+          }
+          silenceTimerRef.current = null;
+        }, 1200);
+      }
+    } else {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+      rmsHistoryRef.current.push(rms);
     }
-
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event) => {
-      let finalTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        }
-      }
-      if (finalTranscript) {
-        setTranscript(finalTranscript);
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event);
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognition.start();
-    setIsListening(true);
-    recognitionRef.current = recognition;
   }, []);
 
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-    setIsListening(false);
-  }, []);
+  const startListening = useCallback(async (stream) => {
+    sessionIdRef.current = crypto.randomUUID();
+    rmsHistoryRef.current = [];
+    chunksRef.current = [];
 
-  return {
-    transcript,
-    isListening,
-    startListening,
-    stopListening,
-    resetTranscript: () => setTranscript('')
-  };
+    const mr = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    mediaRecorderRef.current = mr;
+
+    mr.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+
+    mr.onstop = async () => {
+      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      chunksRef.current = [];
+
+      // Biometric snapshot
+      fetch('/api/biometric', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sessionIdRef.current,
+          rmsHistory: rmsHistoryRef.current,
+          duration_ms: rmsHistoryRef.current.length * 100,
+        }),
+      }).catch(() => {});
+
+      // Transcribe via main service (routes to whisper-service or Groq fallback)
+      const fd = new FormData();
+      fd.append('audio', blob, 'audio.webm');
+      try {
+        const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+        const { text } = await res.json();
+        if (text?.trim()) onFinalTranscript(text.trim());
+      } catch (e) {
+        console.error('[whisper]', e);
+      }
+    };
+
+    mr.start(250); // collect chunks every 250ms
+    return { checkSilence };
+  }, [onFinalTranscript]);
+
+  return { startListening, checkSilence };
 }
