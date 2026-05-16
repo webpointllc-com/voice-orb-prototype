@@ -132,3 +132,36 @@ export function calcRMS(timeDomainData) {
   }
   return Math.sqrt(sum / timeDomainData.length);
 }
+
+/**
+ * drawThinkingMini — Orbiting dotted circles + center glow for THINKING state card
+ * (Separate from ribbon wings per Claude spec)
+ */
+export function drawThinkingMini(ctx, phase, W, H) {
+  ctx.clearRect(0, 0, W, H);
+  const cx = W / 2, cy = H / 2;
+
+  // 3 concentric dotted circles, rotating in opposite directions
+  [20, 34, 48].forEach((r, ri) => {
+    const dots = 12 + ri * 4;
+    for (let i = 0; i < dots; i++) {
+      const angle = (i / dots) * Math.PI * 2 + phase * (ri % 2 === 0 ? 1 : -0.7);
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      const op = 0.25 + 0.45 * Math.abs(Math.sin(angle + phase));
+      ctx.beginPath();
+      ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(155,123,255,${op.toFixed(2)})`;
+      ctx.fill();
+    }
+  });
+
+  // Center glow
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 10);
+  g.addColorStop(0, 'rgba(185,103,255,1)');
+  g.addColorStop(1, 'rgba(185,103,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+  ctx.fill();
+}
