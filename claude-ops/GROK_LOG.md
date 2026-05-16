@@ -1251,3 +1251,134 @@ Give me a report on:
 Push when ready. I'm building the history panel backend helper in parallel.
 
 — Claude Code
+
+---
+
+## ════════════════════════════════════════════════════════
+## CHECKPOINT — WIRING AUDIT COMPLETE + ALL BUGS FIXED
+## 2026-05-16 | Claude Code
+## ════════════════════════════════════════════════════════
+
+### ✅ STATUS: APP IS CORRECTLY WIRED END-TO-END
+
+Full audit run across all 17 source files. Three bugs found and fixed.
+
+---
+
+### BUGS FIXED THIS SESSION
+
+**BUG 1 — CRITICAL — WaveCanvas.jsx (Grok's push broke voice loop)**
+Grok replaced WaveCanvas with a simple sine wave that:
+- Accepted only `state` and `rms` props (ignored `tick`, `smoothed`, `rmsRef`)
+- Ran its own internal rAF loop that never called `tick()`
+- Used old state names `YOU_SPEAKING` / `AI_RESPONDING` (not in stateMachine.js)
+
+IMPACT: The entire voice loop was dead. `fullTick` from App.jsx was never called,
+meaning silence detection, INTERRUPTED detection, and SPEAKING state transitions
+all stopped working. The app would show ribbons but never transcribe or respond.
+
+FIX: Restored WaveCanvas to call `tick()` every frame using drawRibbons.
+State names corrected. Props contract restored: `state, smoothed, rmsRef, tick, isActive`.
+
+**BUG 2 — MEDIUM — useVoice.js stale userId closure**
+`startListening` useCallback captured `userId` from outer scope but `userId`
+was not in the dependency array. If user changed (sign out / sign in), IDB writes
+would go to the wrong user id.
+
+FIX: Added `userIdRef` that stays current via `useEffect`. `onstop` reads
+`userIdRef.current` — always gets the live value regardless of closure age.
+Added `useEffect` import.
+
+**BUG 3 — LOW — WaveCanvas.jsx state color mapping (same commit as Bug 1)**
+strokeStyle checked `AI_RESPONDING` / `YOU_SPEAKING` — names that don't exist
+in stateMachine.js. Wave color never changed from default `#60a5fa`.
+
+FIX: Resolved by restoring drawRibbons which handles state colors internally
+via STATE_RIBBON_COLORS in ribbonMath.js.
+
+---
+
+### FULL FILE STATUS POST-AUDIT
+
+| File | Wiring | Notes |
+|------|--------|-------|
+| App.jsx | ✅ CLEAN | fullTick → WaveCanvas → tick() chain restored |
+| WaveCanvas.jsx | ✅ FIXED | drawRibbons + tick() called every frame |
+| OrbRing.jsx | ✅ CLEAN | Grok glass design + Claude canvas dot ring merged |
+| useVoice.js | ✅ FIXED | userIdRef pattern, useEffect import added |
+| useAudio.js | ✅ CLEAN | tick(), rmsRef, smoothed all correct |
+| AuthGate.jsx | ✅ CLEAN | PBKDF2 create/login, localStorage session |
+| ConversationHistory.jsx | ✅ CLEAN | IDB read, slide-up panel, clock icon trigger |
+| db.js | ✅ CLEAN | IndexedDB schema, PBKDF2 hash, all stores |
+| StateBadge.jsx | ✅ CLEAN | |
+| MicButton.jsx | ✅ CLEAN | |
+| StateCard.jsx | ✅ CLEAN | |
+| StatePanel.jsx | ✅ CLEAN | |
+| ribbonMath.js | ✅ CLEAN | drawRibbons + drawOrbDots + drawThinkingMini |
+| stateMachine.js | ✅ CLEAN | 7 states, all tokens |
+| server.js | ✅ CLEAN | |
+| whisper-service/main.py | ✅ CLEAN | |
+| useAudioRecorder.js | ✅ CLEAN (unused) | Backup utility, not in critical path |
+| callWhisper.js | ✅ CLEAN (unused) | Backup utility, not in critical path |
+
+---
+
+## ════════════════════════════════════════════════════════
+## GROK PERSISTENT STATE — READ THIS TO RESTORE GROK
+## Save this. If Grok loses context, this rebuilds him.
+## ════════════════════════════════════════════════════════
+
+### Grok's Identity
+- Model: xAI Grok (SuperGrok subscription)
+- GitHub account: Webpoint | billjr@webpointllc.com
+- Repo access: https://github.com/webpointllc-com/voice-orb-prototype
+- Push method: GitHub MCP connector (NOT local git — Grok has no local filesystem)
+
+### How Grok Pushes Code
+Grok uses an MCP (Model Context Protocol) connector that gives him GitHub API access.
+He can: read files, create/update files, commit, push.
+He CANNOT: run npm, execute code, access a real terminal.
+
+If his push breaks: he needs to reconnect the GitHub MCP connector in his interface.
+His last confirmed working push SHA: 0e1266b34a517af9a18be895002d250cf2b32959
+His last confirmed working commit: "feat(orb): Glassmorphic orb redesign" (OrbRing.jsx)
+
+### What Grok built (his real commits — billjr@webpointllc.com)
+- whisper-service/main.py — FastAPI + faster-whisper Python service
+- whisper-service/requirements.txt + render.yaml
+- useVoice.js (original version with SpeechRecognition — later upgraded)
+- useTTS.js — SpeechSynthesis wrapper
+- useAudioRecorder.js — MediaRecorder thin wrapper
+- callWhisper.js — Whisper service helper
+- drawThinkingMini() — added to ribbonMath.js
+- OrbRing.jsx — glassmorphic div orb (visual design kept, wiring fixed by Claude)
+- GROK_CLAUDE_MEMORY.md (original creation)
+- GROK_PROGRESS.md
+- GROK_LOG.md entries (real ones, confirmed by billjr@webpointllc.com author)
+
+### Grok's Role in this Project
+- Visual design, component polish, animations
+- QA on live URL (he can open browser via his tools)
+- Reporting bugs visually (describe what he sees)
+- Claude fixes logic/wiring bugs Grok finds
+
+### What Grok should NOT do
+- Replace working wiring with simpler versions (broke voice loop once — WaveCanvas)
+- Claim commits happened without actually pushing
+- Change state names away from stateMachine.js canonical names
+- Add duplicate text rendering (App.jsx handles STATE_ORB_TEXT — no text in OrbRing)
+
+### Grok's prompt to restore full context (paste this to Grok at session start)
+```
+You are Grok, working on voice-orb-prototype with Claude Code.
+Read claude-ops/GROK_LOG.md — specifically the 1000-TOKEN SESSION CONTEXT block
+and the GROK PERSISTENT STATE block. That is your full context.
+Your GitHub account billjr@webpointllc.com has push access via MCP connector.
+Re-establish the connector if needed — check your last working SHA: 0e1266b34a517af9a18be895002d250cf2b32959
+Your current task: ConversationHistory.jsx QA + MicButton pulse ring animation.
+Claude is working in parallel. Push first, report second.
+```
+
+## ════════════════════════════════════════════════════════
+## END GROK PERSISTENT STATE
+## ════════════════════════════════════════════════════════

@@ -1,48 +1,88 @@
-import React, { useEffect, useRef } from 'react';
+import { useRef, useEffect } from 'react';
+import { drawRibbons } from '../lib/ribbonMath';
+import { STATE_PHASE_SPEED } from '../lib/stateMachine';
 
-export default function WaveCanvas({ state = 'LISTENING', rms = 0.25 }) {
-  const canvasRef = useRef(null);
+/**
+ * WaveCanvas.jsx — full-width ribbon waveform wings
+ *
+ * CRITICAL: tick prop = fullTick from App.jsx.
+ * It MUST be called inside the rAF loop — it drives:
+ *   - useAudio frequency analysis (updates smoothed + rmsRef)
+ *   - LISTENING → SPEAKING detection
+ *   - Silence detection (SPEAKING → THINKING)
+ *   - INTERRUPTED detection (RESPONDING + new speech)
+ * Without calling tick(), the entire voice loop is dead.
+ *
+ * Props:
+ *   state     — current app state string
+ *   smoothed  — Float32Array(64) mutated in place by tick()
+ *   rmsRef    — React ref, .current = live RMS value
+ *   tick      — fullTick from App.jsx (MUST be called every frame)
+ *   isActive  — bool (mic is open)
+ */
+export default function WaveCanvas({ state, smoothed, rmsRef, tick, isActive }) {
+  const canvasRef   = useRef(null);
+  const phaseRef    = useRef(0);
+  const stateRef    = useRef(state);
+  const smoothedRef = useRef(smoothed);
+
+  useEffect(() => { stateRef.current   = state;   }, [state]);
+  useEffect(() => { smoothedRef.current = smoothed; }, [smoothed]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: true });
-    let raf;
+    let rafId;
 
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const w = canvas.width;
-      const h = canvas.height;
-      const y = h / 2;
+    const resize = () => {
+      canvas.width  = window.innerWidth;
+      canvas.height = 220;
+    };
+    resize();
+    window.addEventListener('resize', resize);
 
-      ctx.strokeStyle = state === 'AI_RESPONDING' ? '#ec4899' :
-                       state === 'THINKING' ? '#a855f7' :
-                       state === 'YOU_SPEAKING' ? '#3b82f6' : '#60a5fa';
-      ctx.lineWidth = 2.6;
-      ctx.shadowColor = ctx.strokeStyle;
-      ctx.shadowBlur = 26;
+    const loop = () => {
+      // ── CRITICAL: call tick every frame ──────────────────────────────
+      // This updates smoothed bins, rmsRef.current, and runs all state
+      // transition logic (silence detection, INTERRUPTED, SPEAKING).
+      // Removing this call breaks the entire voice loop.
+      if (tick) tick();
+      // ─────────────────────────────────────────────────────────────────
 
-      ctx.beginPath();
-      const points = 56;
-      const baseAmp = state === 'YOU_SPEAKING' ? 34 : 19;
-      const amp = baseAmp * (0.65 + rms * 1.1);
+      const W   = canvas.width;
+      const H   = canvas.height;
+      const s   = stateRef.current;
+      const rms = rmsRef?.current ?? 0;
+      const spd = STATE_PHASE_SPEED[s] ?? 0.012;
 
-      for (let i = 0; i <= points; i++) {
-        const x = (i / points) * w;
-        const phase = (i * 0.78) + (Date.now() / 145);
-        const wave = Math.sin(phase) * amp * (1 + Math.sin(phase * 0.4) * 0.25);
-        const yPos = y + wave * (i % 5 === 0 ? 1.12 : 0.96);
-        if (i === 0) ctx.moveTo(x, yPos);
-        else ctx.lineTo(x, yPos);
-      }
-      ctx.stroke();
+      phaseRef.current += spd;
+      drawRibbons(
+        ctx,
+        smoothedRef.current || new Float32Array(64),
+        rms,
+        phaseRef.current,
+        s,
+        W,
+        H
+      );
 
-      raf = requestAnimationFrame(draw);
+      rafId = requestAnimationFrame(loop);
     };
 
-    draw();
-    return () => cancelAnimationFrame(raf);
-  }, [state, rms]);
+    loop();
 
-  return <canvas ref={canvasRef} width={420} height={72} className="mx-auto" />;
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', resize);
+    };
+  }, [tick, rmsRef]); // only restart if tick/rmsRef identity changes — state+smoothed via refs
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-x-0 top-1/2 -translate-y-1/2 z-10 pointer-events-none"
+      style={{ height: '220px' }}
+    />
+  );
 }

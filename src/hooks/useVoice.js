@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { saveBiometric, saveRecording, updateVoiceProfile } from '../lib/db';
 
 /**
@@ -14,6 +14,10 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
   const sessionIdRef     = useRef(null);
   const rmsHistoryRef    = useRef([]);
   const isRecordingRef   = useRef(false);
+  // Keep userId in a ref so onstop closure always sees the current value
+  // without requiring startListening to be recreated on every userId change
+  const userIdRef        = useRef(userId);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
 
   const checkSilence = useCallback((rms) => {
     if (!isRecordingRef.current) return;
@@ -72,9 +76,10 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bioPayload),
       }).catch(() => {});
-      if (userId) {
-        saveBiometric({ userId, sessionId: bioPayload.sessionId, rmsHistory: bioPayload.rmsHistory, durationMs: bioPayload.duration_ms }).catch(() => {});
-        updateVoiceProfile(userId, rmsHistoryRef.current.slice(-20)).catch(() => {});
+      const uid = userIdRef.current; // always current — no stale closure
+      if (uid) {
+        saveBiometric({ userId: uid, sessionId: bioPayload.sessionId, rmsHistory: bioPayload.rmsHistory, durationMs: bioPayload.duration_ms }).catch(() => {});
+        updateVoiceProfile(uid, rmsHistoryRef.current.slice(-20)).catch(() => {});
       }
 
       // Transcribe via main service (routes to whisper-service or Groq fallback)
@@ -85,8 +90,8 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
         const data = await res.json();
         const transcript = data.text?.trim();
         // Save recording blob + transcript to IndexedDB
-        if (userId && transcript) {
-          saveRecording({ userId, sessionId: sessionIdRef.current, audioBlob: blob, transcript }).catch(() => {});
+        if (uid && transcript) {
+          saveRecording({ userId: uid, sessionId: sessionIdRef.current, audioBlob: blob, transcript }).catch(() => {});
         }
         if (transcript) {
           onFinalTranscript(transcript);

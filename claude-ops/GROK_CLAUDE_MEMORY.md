@@ -1,92 +1,144 @@
 # GROK / CLAUDE MEMORY
 **Shared Persistent Memory — Voice Orb Prototype**
-**Re-read on every session entry. Update after every major push.**
+**Re-read every session. Both agents update after major work.**
 
-## Snapshot (2026-05-16 — feature complete, deploying)
-Voice-first biometric AI interface. Two Render free-tier services live. Full voice loop + IndexedDB auth + local storage wired.
+---
+
+## 🟢 CHECKPOINT — WIRING AUDIT CLEAN (2026-05-16)
+All 17 source files audited. 3 bugs fixed. App is correctly wired end-to-end.
+See GROK_LOG.md → "CHECKPOINT — WIRING AUDIT COMPLETE" for full details.
+
+---
+
+## Quick Restore Prompts
+
+**To restore Grok:**
+```
+You are Grok working on voice-orb-prototype with Claude Code.
+Read claude-ops/GROK_LOG.md — the 1000-TOKEN SESSION CONTEXT block and GROK PERSISTENT STATE block.
+GitHub: billjr@webpointllc.com via MCP connector. Last working SHA: 0e1266b34a517af9a18be895002d250cf2b32959
+Current task: MicButton pulse ring + QA on live URL. Push first, report second.
+```
+
+**To restore Claude Code:**
+```
+Continue voice-orb-prototype. Read claude-ops/GROK_CLAUDE_MEMORY.md then GROK_LOG.md
+SESSION CONTEXT block. All components done. Wiring audited clean. Next: respond to
+whatever Grok pushed and tackle remaining nice-to-haves (voice profile page, etc).
+```
+
+---
+
+## Live URLs
+- App: https://voice-orb-prototype.onrender.com
+- Whisper: https://voice-orb-whisper.onrender.com
+- Status: GET /api/status → `{"ok":true,"stt":"...","llm":"groq:gemma2-9b-it"}`
+
+---
 
 ## Architecture (locked)
-- **Main**: https://voice-orb-prototype.onrender.com (Node.js/Express + React 19 + Vite)
-  - /api/transcribe → tries whisper-service (15s timeout) → falls back to Groq Whisper
-  - /api/chat → Gemma2 9B via Groq (SSE stream)
-  - /api/biometric → stores voice snapshots server-side
-  - /api/status → health check
-- **Whisper**: https://voice-orb-whisper.onrender.com (Python FastAPI + faster-whisper base.en)
-- **Visual rule**: Ribbon wings ALL states. drawThinkingMini() for THINKING card ONLY.
-- **Audio**: MediaRecorder + silence detection (RMS < 0.018 for 1200ms) + biometric snapshots
-- **Auth**: IndexedDB + localStorage session. No backend auth. PBKDF2 password hashing.
+- Frontend: React 19 + Vite 6 + Tailwind v4 + Framer Motion
+- STT: /api/transcribe → whisper-service (faster-whisper base.en) → Groq Whisper fallback
+- LLM: Gemma2-9b-it via Groq, SSE stream (/api/chat)
+- TTS: browser SpeechSynthesis (rate 1.05)
+- Auth: IndexedDB PBKDF2 + localStorage session — no backend auth
+- IDB Storage: ~5GB — users, conversations, biometrics, recordings
 
-## WAVE REFERENCE SPEC — Workplace Technologies HTML prototype
-**Canonical wave movement pattern. Never deviate.**
+---
 
-### Ribbon Wings (drawRibbons)
-- **Envelope**: `Math.sin(t * Math.PI)` — rises from 0, peaks at center, falls to 0
-- **Bin mapping**: `Math.min(63, Math.floor(t * 60))` — maps position to frequency bin
-- **Amplitude curve**: `(0.4 + mag * 1.4)` — always has a minimum floor, scales with audio
-- **Attack/decay smoothing**: attack `0.45`, decay `0.12` (fast rise, slow fall)
-- **Return path belly**: `CY + flatH * env` (5px for ptsA, 7px for ptsB) — filled shape
-- **Wave A**: `sin(t*π*2 + phase*1.2)*22*env*(0.40+mag*1.40) + sin(t*π*4.3 + phase*0.7+0.9)*9*env*(0.20+mag*0.80)`
-- **Wave B**: `sin(t*π*2.4 + phase*0.9+1.2)*24*env*(0.40+mag*1.20) + sin(t*π*3.8 + phase*1.4+2.1)*8*env*(0.18+mag*0.70)`
-- **Composite mode**: `ctx.globalCompositeOperation = 'lighter'`
-- **Diamond markers**: peak detection on waveA, 12 max, size 2–7px
+## 7 States (stateMachine.js — USE THESE EXACT STRINGS)
+```
+IDLE → LISTENING → SPEAKING → THINKING → RESPONDING → INTERRUPTED → LISTENING
+                                        ↘ ERROR ↗ (any state on failure)
+```
+State transitions enforced by `canTransition(from, to)`. Never bypass it.
 
-### Dot Ring (drawOrbDots) — orb canvas overlay
-- **Count**: `Math.min(96, Math.max(48, Math.floor(W/4)))`
-- **Base radius**: `Math.min(W,H) * 0.43`
-- **Per-dot radius**: `baseR + mag*22 + sin(phase*1.4 + i*0.07)*0.5`
-- **Opacity**: `0.35 + mag * 0.55` — highly responsive to audio
-- **Blend mode**: `mixBlendMode: 'screen'` on canvas
+---
 
-## Component Status — ALL COMPLETE
-| File | Status | Notes |
-|------|--------|-------|
-| App.jsx | ✅ | AuthGate wrapped, INTERRUPTED, StateBadge, THINKING labels, AnimatePresence response |
-| AuthGate.jsx | ✅ | Create/Login UI, PBKDF2 hash, localStorage session |
-| db.js | ✅ | IndexedDB: users, conversations, biometrics, recordings |
-| useVoice.js | ✅ | MediaRecorder + silence + biometric + recording save to IDB |
-| useAudio.js | ✅ | Returns stream from startMic() |
-| WaveCanvas.jsx | ✅ | rmsRef (not stale), STATE_PHASE_SPEED |
-| OrbRing.jsx | ✅ | SVG ring + drawOrbDots canvas overlay, rmsRef |
-| MicButton.jsx | ✅ | Mic/stop icons, disabled during THINKING/RESPONDING |
-| StateCard.jsx | ✅ | drawRibbons all states, drawThinkingMini for THINKING |
-| StatePanel.jsx | ✅ | STATE_CARD_ORDER, all 4 props to StateCard |
-| StateBadge.jsx | ✅ | Wired top-left in App.jsx |
-| ribbonMath.js | ✅ | drawRibbons + drawOrbDots + drawThinkingMini |
-| stateMachine.js | ✅ | 7 states, canTransition, all visual tokens |
-| server.js | ✅ | Whisper routing + Groq fallback + biometric storage |
-| whisper-service/main.py | ✅ | FastAPI + faster-whisper, boots correctly |
+## Visual Rules (LOCKED — never change)
+- Ribbon wings: `drawRibbons(ctx, smoothed, rms, phase, state, W, H)` — ALL states
+- THINKING StateCard only: `drawThinkingMini(ctx, phase, W, H)` — orbiting dots
+- Orb dot ring: `drawOrbDots()` on canvas overlay, `mixBlendMode: 'screen'`
+- Wave envelope: `Math.sin(t * Math.PI)` — do not touch
+- Amplitude: `(0.40 + mag * 1.40)` for wave A, `(0.40 + mag * 1.20)` for wave B
+- Attack smoothing: 0.45 / Decay: 0.12
+- **No bars. Ever. No separate text inside OrbRing (App.jsx handles STATE_ORB_TEXT)**
 
-## IndexedDB Schema
-- **users**: id, username, displayName, passwordHash (PBKDF2), createdAt, voiceProfile, totalSessions
-- **conversations**: id, userId, transcript, response, durationMs, timestamp
-- **biometrics**: id, userId, sessionId, rmsHistory, durationMs, timestamp
-- **recordings**: id, userId, sessionId, audioBlob, transcript, timestamp
-- **Session**: localStorage `vob_session` → { id, username, displayName }
+---
 
-## Remaining / Nice-to-Have
-1. End-to-end smoke test on live URL — verify full loop works post-deploy
-2. Conversation history UI — show past sessions to logged-in user
-3. Voice profile visualization — display biometric patterns over time
-4. INTERRUPTED threshold tuning — currently 0.032 rms, may need adjustment
+## CRITICAL WIRING RULE — WaveCanvas tick()
+```
+WaveCanvas rAF loop MUST call tick() every frame.
+tick() = fullTick from App.jsx which drives:
+  - useAudio frequency analysis (updates smoothed + rmsRef)
+  - LISTENING → SPEAKING transition (rms > 0.025)
+  - Silence detection → THINKING (rms < 0.018 for 1200ms)
+  - INTERRUPTED detection (rms > 0.032 during RESPONDING)
+Without tick(): the app shows animations but never transcribes or responds.
+```
+
+---
+
+## IndexedDB Schema (db.js)
+```
+users:         id, username, displayName, passwordHash, passwordSalt (PBKDF2), createdAt, voiceProfile
+conversations: id(auto), userId, transcript, response, durationMs, timestamp
+biometrics:    id(auto), userId, sessionId, rmsHistory, durationMs, timestamp
+recordings:    id(auto), userId, sessionId, audioBlob, transcript, timestamp
+localStorage:  vob_session → {id, username, displayName}
+```
+
+---
+
+## All Components — Status Post-Audit
+
+| File | Owner | Status |
+|------|-------|--------|
+| App.jsx | Claude | ✅ fullTick wired, AuthGate wrapped, ConversationHistory, AnimatePresence |
+| AuthGate.jsx | Claude | ✅ Create/Login, PBKDF2, localStorage session |
+| db.js | Claude | ✅ Full IDB schema + PBKDF2 helpers |
+| ConversationHistory.jsx | Claude | ✅ Slide-up panel, clock icon, IDB read |
+| WaveCanvas.jsx | Claude | ✅ drawRibbons + tick() per frame (restored after Grok overwrote) |
+| OrbRing.jsx | Both | ✅ Grok's glass design + Claude's canvas dot ring + rmsRef glow |
+| useVoice.js | Both | ✅ MediaRecorder + silence + IDB save + userIdRef fix |
+| useAudio.js | Claude | ✅ tick(), rmsRef, smoothed, startMic returns stream |
+| MicButton.jsx | Grok | ✅ Clean, correct props |
+| StateBadge.jsx | Grok | ✅ Wired top-left in App |
+| StateCard.jsx | Grok | ✅ drawRibbons + drawThinkingMini |
+| StatePanel.jsx | Claude | ✅ STATE_CARD_ORDER, correct props |
+| ribbonMath.js | Claude | ✅ drawRibbons + drawOrbDots + drawThinkingMini |
+| stateMachine.js | Both | ✅ 7 states, all visual tokens |
+| server.js | Claude | ✅ Whisper routing + Groq fallback + biometric |
+| whisper-service/main.py | Grok | ✅ FastAPI + faster-whisper |
+
+---
+
+## Remaining Work
+1. **MicButton pulse ring** — slow expanding ring when LISTENING (Grok)
+2. **Live URL QA** — auth, ribbons, dot ring, INTERRUPTED (Grok)
+3. **Voice profile page** — visualize biometric history (nice-to-have)
+4. **Conversation history** — component built, needs QA (Claude built it)
+
+---
+
+## Grok's GitHub Setup
+- Account: Webpoint | billjr@webpointllc.com
+- Push method: GitHub MCP connector (no local git/terminal)
+- Last working SHA: 0e1266b34a517af9a18be895002d250cf2b32959
+- If push breaks: reconnect GitHub MCP connector in Grok's interface
+
+---
 
 ## Key Decisions (do not revisit)
-- Two free-tier Render services
-- Ribbon wings only (no bars)
-- MediaRecorder + backend Whisper
-- Biometric snapshots dual-saved (backend + IndexedDB)
+- Two Render free-tier services (RAM separation)
+- Ribbon wings only — no bars, no separate WaveCanvas sine waves
+- MediaRecorder + backend Whisper (not Web SpeechRecognition)
+- Biometric snapshots saved backend AND IndexedDB
 - Gemma2 9B on Groq / Browser SpeechSynthesis TTS
-- rmsRef as ref not value (no stale closures)
+- rmsRef as ref not value everywhere (no stale closures)
 - PBKDF2 via SubtleCrypto — no backend auth needed for demo
+- drawOrbDots on canvas overlay (mixBlendMode screen) — not SVG dots
+- State text rendered in App.jsx via STATE_ORB_TEXT — never hardcode in OrbRing
 
-## Quick Reference
-- Main: https://voice-orb-prototype.onrender.com
-- Whisper: https://voice-orb-whisper.onrender.com
-- Status: /api/status
-- Log: claude-ops/GROK_LOG.md
-- Memory: claude-ops/GROK_CLAUDE_MEMORY.md
-
-## NOTE ON GROK PUSH ACCESS
-Grok (billjr@webpointllc.com) DID push 13 real commits early in the project.
-His push access appears to have broken mid-session (token/connection issue).
-He is NOT unable to push by design — something needs to be reconnected.
-Once restored, he can resume direct commits.
+---
+**Rule: update this file + push after every significant change.**
