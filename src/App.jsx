@@ -6,12 +6,14 @@ import WaveCanvas     from './components/WaveCanvas';
 import OrbRing        from './components/OrbRing';
 import MicButton      from './components/MicButton';
 import StatePanel     from './components/StatePanel';
+import StateBadge     from './components/StateBadge';
 
 export default function App() {
   const [state, setState]   = useState(STATES.IDLE);
   const [response, setResp] = useState('');
   const streamRef           = useRef(null);
   const voiceRef            = useRef(null);
+  const interruptedRef      = useRef(false); // debounce INTERRUPTED trigger
 
   const { smoothed, rmsRef, tick, startMic, stopMic, isActive } = useAudio();
 
@@ -54,19 +56,22 @@ export default function App() {
         }
       }
 
-      // TTS
+      // TTS — cancelled externally if INTERRUPTED
       if (full.trim()) {
         const utt  = new SpeechSynthesisUtterance(full);
         utt.rate   = 1.05;
         utt.onend  = () => {
-          if (streamRef.current) {
+          // Only restart loop if we weren't interrupted mid-speech
+          if (streamRef.current && !interruptedRef.current) {
             go(STATES.LISTENING);
             voiceRef.current?.startListening(streamRef.current);
-          } else {
+          } else if (!interruptedRef.current) {
             go(STATES.IDLE);
           }
         };
-        utt.onerror = () => go(STATES.IDLE);
+        utt.onerror = () => {
+          if (!interruptedRef.current) go(STATES.IDLE);
+        };
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(utt);
       } else {
@@ -104,23 +109,47 @@ export default function App() {
       stopListening();
       stopMic();
       streamRef.current = null;
+      interruptedRef.current = false;
       setState(STATES.IDLE);
       setResp('');
     }
   }, [state, startMic, stopMic, startListening, stopListening, go]);
 
-  // rAF tick: audio analysis + silence detection + state nudge
+  // rAF tick: audio analysis + silence detection + INTERRUPTED detection
   const fullTick = useCallback(() => {
     if (tick) tick();
     const rms = rmsRef.current ?? 0;
+
+    // LISTENING → SPEAKING when voice detected
     if (state === STATES.LISTENING && rms > 0.025) go(STATES.SPEAKING);
-    if (state === STATES.SPEAKING)  checkSilence(rms);
+
+    // SPEAKING → silence detection
+    if (state === STATES.SPEAKING) checkSilence(rms);
+
+    // RESPONDING + new voice = INTERRUPTED — cut TTS, restart listening
+    if (state === STATES.RESPONDING && rms > 0.032 && !interruptedRef.current) {
+      interruptedRef.current = true;
+      window.speechSynthesis.cancel();
+      go(STATES.INTERRUPTED);
+
+      // Brief INTERRUPTED flash, then drop into LISTENING + restart recording
+      setTimeout(() => {
+        interruptedRef.current = false;
+        if (streamRef.current) {
+          go(STATES.LISTENING);
+          voiceRef.current?.startListening(streamRef.current);
+        }
+      }, 350);
+    }
   }, [tick, state, rmsRef, checkSilence, go]);
 
   const orbText = STATE_ORB_TEXT[state] ?? { line1: '', line2: '' };
 
   return (
     <div className="relative min-h-screen bg-black text-white overflow-hidden select-none">
+
+      {/* State badge — top left */}
+      <StateBadge state={state} />
 
       {/* Ribbon waveform wings — full width, behind everything */}
       <WaveCanvas
