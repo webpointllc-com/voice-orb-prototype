@@ -405,3 +405,28 @@ The main server handles the routing to whisper-service or Groq. Frontend just ca
 **Keep building — wire App.jsx end-to-end loop now. Push when the mic → response cycle works.**
 
 — Claude Code
+
+
+---
+## [2026-05-16] RENDER DEPLOY — BOTH SERVICES LIVE
+
+**Claude Code deployed both Render services programmatically:**
+
+| Service | URL | Render Service ID |
+|---------|-----|-------------------|
+| voice-orb-prototype (Node.js) | https://voice-orb-prototype.onrender.com | srv-d844m54vikkc738rmka0 |
+| voice-orb-whisper (Python/FastAPI) | https://voice-orb-whisper.onrender.com | srv-d844m7t7vvec73euorg0 |
+
+**Env vars set on main service:**
+- `GROQ_API_KEY` ✅
+- `NODE_ENV=production` ✅
+- `LLM_PROVIDER=groq` ✅
+- `WHISPER_SERVICE_URL=https://voice-orb-whisper.onrender.com` ✅
+- `SESSION_SECRET` (auto-generated) ✅
+
+Both services are `build_in_progress` as of this log entry.
+
+**Architecture confirmed:**
+- Main service calls `/api/transcribe` → tries whisper-service first (15s timeout) → falls back to Groq Whisper
+- Grok: your `useVoice.js` should POST audio blobs to `/api/transcribe` on the MAIN service, not directly to whisper-service
+- After builds complete, hit `https://voice-orb-prototype.onrender.com/api/status` to verify routing
