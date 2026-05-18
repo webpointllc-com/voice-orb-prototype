@@ -744,102 +744,119 @@
   // When the peak nears the ring there's a small splash boost so the
   // bounce reads as impact, not slide.
   function drawRipple(cx, cy, ringR){
-    // Vertical bar wings with diamond nodes — ported from React reference.
-    // 36 bars per side, taller toward the ring, diamond highlights on tall bars,
-    // always-alive baseline via slow breathe modulation.
+    // Reference-match: thin horizontal wave line with 5–7 diamond peaks per side.
+    // Line glows; diamonds are rotated squares with bright cores and small "echo bumps".
     const baseY = cy;
     const t = perfNow * 0.001;
     const reveal = Live.revealWing;
     const breathe = 0.5 + 0.5 * Math.sin(t * 0.6);
 
-    const minDim  = Math.min(W, H);
-    const BAR_W   = Math.max(5, minDim * 0.014);
-    const SPACING = Math.max(14, minDim * 0.028);
-    const GAP     = ringR + minDim * 0.035;
-    const MAX_H   = minDim * 0.26;
-    // Adaptive bar count — fit available horizontal space per side
-    const MARGIN  = 14;
-    const availPerSide = Math.max(0, cx - GAP - MARGIN);
-    const N = Math.max(6, Math.min(28, Math.floor(availPerSide / SPACING)));
+    const minDim   = Math.min(W, H);
+    const WING_START_OFF = minDim * 0.015;
+    const xLeftIn  = cx - ringR - WING_START_OFF;
+    const xRightIn = cx + ringR + WING_START_OFF;
+    const xLeftOut  = Math.max(W * 0.03, cx - ringR * 6);
+    const xRightOut = Math.min(W * 0.97, cx + ringR * 6);
 
-    // Faint horizontal baseline across the full width
-    const blg = ctx.createLinearGradient(W * 0.03, 0, W * 0.97, 0);
-    blg.addColorStop(0,    'rgba(30,60,160,0)');
-    blg.addColorStop(0.15, `rgba(50,100,220,${0.18 * reveal})`);
-    blg.addColorStop(0.5,  `rgba(80,140,255,${0.13 * reveal})`);
-    blg.addColorStop(0.85, `rgba(120,60,210,${0.18 * reveal})`);
-    blg.addColorStop(1,    'rgba(80,30,160,0)');
-    ctx.beginPath();
-    ctx.moveTo(W * 0.03, baseY);
-    ctx.lineTo(W * 0.97, baseY);
-    ctx.lineWidth   = 0.6;
-    ctx.strokeStyle = blg;
-    ctx.stroke();
+    // ── Thin glowing baseline (the "wave line") ───────────────────────────
+    function drawLine(x0, x1, color){
+      const grad = ctx.createLinearGradient(x0, baseY, x1, baseY);
+      const inIsRight = x1 > x0 ? false : true; // direction matters for color anchor
+      // anchor full color at the end nearest the ring
+      grad.addColorStop(0,   `rgba(${color[0]},${color[1]},${color[2]},0)`);
+      grad.addColorStop(0.5, `rgba(${color[0]},${color[1]},${color[2]},${0.45 * reveal})`);
+      grad.addColorStop(1,   `rgba(${color[0]},${color[1]},${color[2]},${0.85 * reveal})`);
+      ctx.save();
+      ctx.shadowColor = `rgba(${color[0]},${color[1]},${color[2]},0.55)`;
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x0, baseY);
+      ctx.lineTo(x1, baseY);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // Left line goes from outer (x=xLeftOut) toward ring at xLeftIn — color anchored at ring end
+    drawLine(xLeftOut, xLeftIn, Live.L);
+    drawLine(xRightOut, xRightIn, Live.R);
 
-    function drawSideBars(side, color){
-      for (let i = 0; i < N; i++){
-        // Pull FFT magnitude — sample first ~50% of spectrum (vocal range)
-        const bIdx = Math.min(SPECTRUM_BINS - 1, Math.floor((i / N) * SPECTRUM_BINS * 0.52));
-        const amp  = (smooth[bIdx] || 0) * Live.amp;
+    // ── Diamond nodes — 6 per side, positions weighted toward the ring ────
+    // The reference shows the brightest/largest diamond closest to the ring,
+    // and they get smaller and fainter as they fade outward.
+    const PEAKS = 6;
+    function drawPeaks(xIn, xOut, color, sideSign){
+      // Sample FFT for amplitude variation — first 30 bins (vocal range)
+      for (let i = 0; i < PEAKS; i++){
+        // Position: 0 = at ring, 1 = at outer end
+        const f = (i + 0.5) / PEAKS;
+        // Bias positions slightly toward the ring (Pow < 1 pulls toward 0 = ring)
+        const fBias = Math.pow(f, 1.15);
+        const x = xIn + (xOut - xIn) * fBias;
 
-        // Always-alive minimum height — taller near ring, breathes
-        const minH  = MAX_H * (0.12 + breathe * 0.06) * Math.pow(1 - i / N, 0.7);
-        const taper = Math.pow(1 - i / N, 0.55);
-        const h     = Math.max(minH, amp * MAX_H * 1.8 * taper);
+        // Pull magnitude — assign each peak a different bin
+        const binIdx = Math.min(SPECTRUM_BINS - 1, 2 + i * 5);
+        const mag = (smooth[binIdx] || 0) * Live.amp;
+        // Per-peak breathe phase so they pulse independently
+        const peakBreath = 0.5 + 0.5 * Math.sin(t * (0.9 + i * 0.27) + i * 1.3);
 
-        const x  = cx + side * (GAP + i * SPACING);
-        const tc = i / N;
+        // Envelope: larger near ring, smaller at outer tip
+        const env = Math.pow(1 - f, 0.55);
+        // Smaller, subtle diamonds — reference look (thin line with accent peaks)
+        const baseSize  = minDim * 0.005;
+        const audioSize = mag * minDim * 0.010;
+        const idleSize  = peakBreath * minDim * 0.002;
+        const size = Math.max(minDim * 0.002, (baseSize + audioSize + idleSize) * env) * (0.7 + 0.3 * reveal);
 
-        // Color blend along the wing — outer tip uses brighter mix
-        const cr = Math.round(color[0] + tc * 18);
-        const cg = Math.round(color[1] - tc * 30);
-        const cb = Math.round(color[2] + tc * 10);
-        const a  = Math.max(0.45, Math.min(1, 0.55 + amp * 0.7)) * reveal;
+        const alpha = Math.min(1, 0.75 + mag * 0.25 + peakBreath * 0.15) * reveal;
+        const cr = color[0], cg = color[1], cb = color[2];
 
-        // Vertical capsule bar — gradient fades top/bottom, solid center
-        const barGrad = ctx.createLinearGradient(x, baseY - h, x, baseY + h);
-        barGrad.addColorStop(0,    `rgba(${cr},${cg},${cb},${a * 0.25})`);
-        barGrad.addColorStop(0.25, `rgba(${cr},${cg},${cb},${a * 0.95})`);
-        barGrad.addColorStop(0.50, `rgba(${cr},${cg},${cb},${a})`);
-        barGrad.addColorStop(0.75, `rgba(${cr},${cg},${cb},${a * 0.95})`);
-        barGrad.addColorStop(1,    `rgba(${cr},${cg},${cb},${a * 0.25})`);
-
-        const bw = BAR_W;
-        const br = bw * 0.5;
-        const x0 = x - bw / 2;
-        const y0 = baseY - h;
-        const bh = h * 2;
+        // 1) Faint "echo bumps" — small wave swells flanking each diamond.
+        // These are the tiny scallops visible in the reference around each peak.
+        const echoSpan = size * 2.4;
+        const echoH = size * 0.55;
+        ctx.save();
+        ctx.shadowColor = `rgba(${cr},${cg},${cb},0.5)`;
+        ctx.shadowBlur = 4;
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha * 0.55})`;
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.moveTo(x0 + br, y0);
-        ctx.lineTo(x0 + bw - br, y0);
-        ctx.quadraticCurveTo(x0 + bw, y0,      x0 + bw, y0 + br);
-        ctx.lineTo(x0 + bw, y0 + bh - br);
-        ctx.quadraticCurveTo(x0 + bw, y0 + bh, x0 + bw - br, y0 + bh);
-        ctx.lineTo(x0 + br, y0 + bh);
-        ctx.quadraticCurveTo(x0, y0 + bh,      x0, y0 + bh - br);
-        ctx.lineTo(x0, y0 + br);
-        ctx.quadraticCurveTo(x0, y0,           x0 + br, y0);
-        ctx.closePath();
-        ctx.fillStyle = barGrad;
-        ctx.fill();
+        ctx.moveTo(x - echoSpan, baseY);
+        ctx.quadraticCurveTo(x - echoSpan * 0.5, baseY - echoH, x, baseY);
+        ctx.quadraticCurveTo(x + echoSpan * 0.5, baseY + echoH, x + echoSpan, baseY);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x - echoSpan, baseY);
+        ctx.quadraticCurveTo(x - echoSpan * 0.5, baseY + echoH, x, baseY);
+        ctx.quadraticCurveTo(x + echoSpan * 0.5, baseY - echoH, x + echoSpan, baseY);
+        ctx.stroke();
+        ctx.restore();
 
-        // Diamond nodes on taller bars
-        if (amp > 0.20 && i < N - 3){
-          const ds = bw * 2.0 * Math.min(1, amp);
-          for (const dy of [-h * 0.88, h * 0.88]){
-            ctx.save();
-            ctx.translate(x, baseY + dy);
-            ctx.rotate(Math.PI / 4);
-            ctx.fillStyle = `rgba(${cr},${cg},${cb},${a * 0.65})`;
-            ctx.fillRect(-ds / 2, -ds / 2, ds, ds);
-            ctx.restore();
-          }
-        }
+        // 2) The diamond itself — rotated square with sharp bright core
+        ctx.save();
+        ctx.translate(x, baseY);
+        ctx.rotate(Math.PI / 4);
+
+        // Outer glow — soft halo
+        ctx.shadowColor = `rgba(${cr},${cg},${cb},0.9)`;
+        ctx.shadowBlur = 12 + size * 0.4;
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha * 0.85})`;
+        ctx.fillRect(-size, -size, size * 2, size * 2);
+
+        // Bright core — sharp, almost white
+        ctx.shadowBlur = 3;
+        const coreSize = size * 0.45;
+        const br = Math.min(255, cr + 110);
+        const bg = Math.min(255, cg + 110);
+        const bb = Math.min(255, cb + 70);
+        ctx.fillStyle = `rgba(${br},${bg},${bb},${alpha})`;
+        ctx.fillRect(-coreSize, -coreSize, coreSize * 2, coreSize * 2);
+
+        ctx.restore();
       }
     }
-
-    drawSideBars(-1, Live.L); // left wing (blue-ish)
-    drawSideBars(+1, Live.R); // right wing (purple-ish)
+    drawPeaks(xLeftIn, xLeftOut, Live.L, -1);
+    drawPeaks(xRightIn, xRightOut, Live.R, +1);
   }
 
   // SPEAKING / INTERRUPTED — vertical equalizer bars driven by FFT
