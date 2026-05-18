@@ -1,6 +1,9 @@
 VOICE ORB PROTOTYPE (LITE + PLUG-IN SPEC)
 =========================================
 
+🔗 LIVE:  https://voice-orb-prototype.onrender.com
+🎤 Click the mic button. Allow mic access. Say "My Voice Is My Password".
+
 One Render service. Browser STT default. Open HTTP contract for final integration.
 
 DISCOVERY
