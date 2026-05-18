@@ -33,18 +33,39 @@ const app    = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 // ── Security ─────────────────────────────────────────────────────────────
+// CSP notes:
+//  - public/index.html is a single inline-script SPA, so scriptSrc MUST
+//    include 'unsafe-inline' or the page is blank in production.
+//  - VOICE_ACCESS_URL is an external Render service iframe-warmed via
+//    /healthz and may be fetched directly in the future, so it has to be
+//    allowed in frameSrc and connectSrc. We add the configured origin if
+//    we can parse it; otherwise we fall back to 'https:' so deploys don't
+//    break when the env var is set later.
+const VOICE_ACCESS_ORIGIN = (() => {
+  try { return VOICE_ACCESS_URL ? new URL(VOICE_ACCESS_URL).origin : null; }
+  catch { return null; }
+})();
+const extraConnect = VOICE_ACCESS_ORIGIN ? [VOICE_ACCESS_ORIGIN] : ['https:'];
+const extraFrame   = VOICE_ACCESS_ORIGIN ? [VOICE_ACCESS_ORIGIN] : ['https:'];
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:  ["'self'"],
       styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-      fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
+      fontSrc:     ["'self'", 'https://fonts.gstatic.com', 'data:'],
       scriptSrc:   ["'self'", "'unsafe-inline'"],
-      imgSrc:      ["'self'", 'data:'],
-      connectSrc:  ["'self'"],
-      frameSrc:    ["'self'"],
+      imgSrc:      ["'self'", 'data:', 'https:'],
+      connectSrc:  ["'self'", ...extraConnect],
+      frameSrc:    ["'self'", ...extraFrame],
+      workerSrc:   ["'self'", 'blob:'],
+      mediaSrc:    ["'self'", 'blob:'],
     },
   },
+  // Render terminates TLS upstream — turning HSTS on at the app layer is
+  // fine, but crossOriginEmbedderPolicy blocks the Google Fonts stylesheet
+  // and breaks getUserMedia popups in some browsers. Leave it off.
+  crossOriginEmbedderPolicy: false,
 }));
 
 // HTTPS-only in production — getUserMedia requires secure context

@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Voice step-up authentication prototype — Workplace Technologies LLC",
   "private": true,
-  "engines": { "node": "20.x" },
+  "engines": { "node": ">=20 <21" },
   "scripts": {
     "start":        "node server.js",
     "dev":          "node server.js",
