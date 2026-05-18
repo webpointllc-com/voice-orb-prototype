@@ -1,0 +1,1182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Workplace Technologies — Voice Access</title>
+<meta name="description" content="Voice step-up authentication — Workplace Technologies LLC." />
+<meta name="theme-color" content="#0A0C14" />
+<meta property="og:title" content="Workplace Technologies — Voice Access" />
+<meta property="og:description" content="Voice step-up authentication prototype." />
+<meta property="og:type" content="website" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="voice-access-url" content="" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#000;--ink:#fff;--ink-dim:#9aa3b2;
+    --line-strong:rgba(255,255,255,0.12);
+    --pill-bg:rgba(18,20,26,0.78);
+    --green:#22c55e;--green-glow:rgba(34,197,94,0.45);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:#000;color:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;
+    overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+    position:fixed;inset:0;
+  }
+  .stage{
+    position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;
+    background:radial-gradient(ellipse 80% 60% at 50% 50%,rgba(20,20,32,0.55),transparent 60%),#000;
+  }
+  .topbar{
+    position:relative;z-index:5;display:flex;align-items:center;justify-content:space-between;
+    padding:clamp(16px,2.5vw,28px) clamp(20px,3vw,40px);pointer-events:none;
+  }
+  .topbar > *{pointer-events:auto}
+  .pill{
+    position:relative;display:inline-flex;align-items:center;gap:9px;
+    padding:8px 16px 8px 14px;background:var(--pill-bg);
+    border:0.5px solid var(--line-strong);border-radius:999px;
+    font-size:13.5px;font-weight:500;letter-spacing:-0.005em;color:#fff;
+    backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);
+    box-shadow:inset 0 0 0 0.5px rgba(255,255,255,0.04),0 4px 14px rgba(0,0,0,0.5);
+  }
+  .pill-dot{
+    width:7px;height:7px;border-radius:999px;background:var(--green);
+    box-shadow:0 0 0 2px rgba(34,197,94,0.18),0 0 12px var(--green-glow);
+    animation:pulseDot 2s ease-in-out infinite;
+  }
+  @keyframes pulseDot{
+    0%,100%{box-shadow:0 0 0 2px rgba(34,197,94,0.18),0 0 10px var(--green-glow);}
+    50%{box-shadow:0 0 0 3px rgba(34,197,94,0.10),0 0 18px var(--green-glow);}
+  }
+  .title{
+    position:relative;font-size:clamp(11px,1.05vw,13px);font-weight:500;
+    letter-spacing:0.32em;color:rgba(255,255,255,0.78);
+    text-transform:uppercase;user-select:none;text-shadow:0 0 24px rgba(255,255,255,0.08);
+  }
+  .gear{
+    position:relative;width:38px;height:38px;border-radius:999px;
+    background:var(--pill-bg);border:0.5px solid var(--line-strong);color:var(--ink-dim);
+    display:grid;place-items:center;cursor:pointer;
+    backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);
+    transition:color .18s ease,transform .18s ease,border-color .18s ease;
+  }
+  .gear:hover{color:#fff;border-color:rgba(255,255,255,0.22);transform:rotate(20deg);}
+  .gear:active{transform:rotate(20deg) scale(0.96);}
+  .gear svg{width:18px;height:18px;}
+  .canvas-wrap{position:relative;width:100%;height:100%;overflow:hidden;}
+  canvas#wave{position:absolute;inset:0;width:100%;height:100%;display:block;}
+
+  /* Outer shell owns the centering transform — never touched by animations. */
+  .center{
+    position:absolute;left:50%;top:50%;
+    transform:translate(-50%,-50%);
+    pointer-events:none;user-select:none;z-index:3;
+  }
+  /* Inner element owns the entrance transform (vo-enter), so the two
+     transforms never fight. text-align here so h1 + p line up. */
+  .center-inner{
+    text-align:center;
+  }
+  .center-inner h1{
+    font-size:clamp(20px,2.4vw,30px);font-weight:500;letter-spacing:-0.018em;color:#fff;
+    line-height:1.1;margin-bottom:8px;text-shadow:0 0 24px rgba(120,170,255,0.18);
+    transition:color .35s ease;
+  }
+  .center-inner p{
+    font-size:clamp(12px,1.05vw,14px);font-weight:400;letter-spacing:0.01em;
+    color:rgba(255,255,255,0.46);transition:color .35s ease;
+  }
+
+  .footer{
+    position:relative;z-index:5;display:flex;flex-direction:column;align-items:center;
+    gap:clamp(14px,1.8vw,22px);
+    padding:clamp(20px,2.6vw,32px) clamp(16px,2vw,24px) clamp(24px,3vw,40px);
+    pointer-events:none;
+  }
+
+  /* ─── Mic prompt block (above the mic) ───────────────────────────────
+     - prompt-cue: small grey Poppins-style "click when ready"
+     - prompt-phrase: bold white "My Voice Is My Password" with per-letter
+       spans that pulse 75% → 100% in a travelling wave while audio is
+       detected (Cursor "thinking" / "Reconnecting…" load look).
+  */
+  .mic-prompt{
+    text-align:center;
+    font-family:'Poppins','Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+    pointer-events:none;
+  }
+  .prompt-cue{
+    font-size:clamp(11px,1.25vw,13px);
+    font-weight:300;
+    letter-spacing:0.06em;
+    color:rgba(255,255,255,0.42);
+    margin:0 0 clamp(6px,0.7vw,9px);
+    text-transform:lowercase;
+  }
+  .prompt-phrase{
+    font-size:clamp(14px,1.65vw,17px);
+    font-weight:600;
+    letter-spacing:0.02em;
+    margin:0;
+    line-height:1.2;
+    white-space:nowrap;
+    background: linear-gradient(
+      90deg,
+      rgba(78,168,255,0.15) 0%,
+      rgba(255,255,255,0.95) 50%,
+      rgba(195,84,255,0.15) 100%
+    );
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    background-position: 220% center;
+  }
+  .prompt-phrase span{
+    display:inline-block;
+  }
+  .prompt-phrase span.space{ width:0.35em; }
+  .prompt-phrase.active{
+    animation: shimmerSweep 3s linear infinite;
+  }
+  .prompt-phrase.karaoke{
+    animation-play-state: paused;
+    transition: background-position 0.25s ease;
+  }
+  @keyframes shimmerSweep{
+    0%   { background-position: 220% center; }
+    100% { background-position: -220% center; }
+  }
+  .mic{
+    position:relative;pointer-events:auto;width:52px;height:52px;border-radius:999px;
+    background:rgba(20,22,28,0.78);border:0.5px solid rgba(255,255,255,0.14);
+    color:#fff;display:grid;place-items:center;cursor:pointer;
+    backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);
+    box-shadow:inset 0 0 0 0.5px rgba(255,255,255,0.04),0 6px 24px rgba(0,0,0,0.6);
+    transition:transform .18s ease,border-color .2s ease,box-shadow .25s ease,background .2s ease;
+  }
+  .mic:hover{border-color:rgba(120,170,255,0.45);box-shadow:inset 0 0 0 0.5px rgba(255,255,255,0.06),0 6px 24px rgba(0,0,0,0.6),0 0 24px rgba(120,170,255,0.22);}
+  .mic:active{transform:scale(0.95);}
+  .mic.active{background:rgba(78,168,255,0.14);border-color:rgba(120,170,255,0.65);box-shadow:inset 0 0 0 0.5px rgba(255,255,255,0.08),0 6px 24px rgba(0,0,0,0.6),0 0 32px rgba(120,170,255,0.35);}
+  .mic svg{width:20px;height:20px;}
+  .vo-enter{--vo-enter-i:0;opacity:0;transform:translate3d(0,18px,0) scale(0.988);filter:blur(8px);}
+  body.vo-entered .vo-enter{animation:voEnterIn 0.82s cubic-bezier(0.22,1,0.36,1) forwards;animation-delay:calc(var(--vo-enter-i) * 52ms);}
+  body.vo-entered .vo-enter::after{
+    content:"";position:absolute;inset:-2px;border-radius:inherit;pointer-events:none;
+    background:linear-gradient(118deg,transparent 36%,rgba(255,255,255,0.55) 50.5%,transparent 65%);
+    background-size:260% 100%;background-position:120% 50%;
+    opacity:0;mix-blend-mode:soft-light;
+    animation:voShimmerPass 1.05s cubic-bezier(0.22,1,0.36,1) forwards;
+    animation-delay:calc(var(--vo-enter-i) * 52ms);z-index:3;
+  }
+  .vo-burst{position:relative;}
+  .vo-burst::after{
+    content:"";position:absolute;inset:-4px;border-radius:inherit;pointer-events:none;
+    background:linear-gradient(118deg,transparent 36%,rgba(255,255,255,0.62) 50.5%,transparent 65%);
+    background-size:260% 100%;background-position:120% 50%;
+    opacity:0;mix-blend-mode:soft-light;
+    animation:voShimmerPass 0.95s cubic-bezier(0.22,1,0.36,1) forwards;z-index:3;
+  }
+  @keyframes voEnterIn{
+    from{opacity:0;transform:translate3d(0,18px,0) scale(0.988);filter:blur(8px);}
+    to  {opacity:1;transform:translate3d(0,0,0) scale(1);filter:blur(0);}
+  }
+  @keyframes voShimmerPass{
+    0%  {background-position:120% 50%;opacity:0;}
+    12% {opacity:1;}
+    100%{background-position:-30% 50%;opacity:0;}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .pill-dot{animation:none !important;}
+    .vo-enter{opacity:1 !important;transform:none !important;filter:none !important;animation:none !important;}
+    .vo-enter::after,.vo-burst::after{display:none !important;}
+  }
+  :focus:not(:focus-visible){outline:none;}
+  :focus-visible{outline:2px solid rgba(120,170,255,0.6);outline-offset:3px;border-radius:999px;}
+  #warmup{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;border:0;}
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <header class="topbar">
+    <div class="pill vo-enter" style="--vo-enter-i:0" id="statePill">
+      <span class="pill-dot" id="stateDot"></span>
+      <span id="stateText">Listening</span>
+    </div>
+    <div class="title vo-enter" style="--vo-enter-i:1">Live Interface Preview</div>
+    <button class="gear vo-enter" style="--vo-enter-i:2" id="gearBtn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </header>
+  <main class="canvas-wrap">
+    <canvas id="wave" aria-hidden="true"></canvas>
+    <!--
+      The outer .center stays fixed at the geometric center via
+      translate(-50%, -50%). The inner .center-inner is what gets the
+      vo-enter shimmer entrance — so its transform doesn't clobber the
+      centering transform on the outer element.
+    -->
+    <div class="center" id="centerBox">
+      <div class="center-inner vo-enter" style="--vo-enter-i:3">
+        <h1 id="centerTitle">Welcome to the RTT Platform</h1>
+        <p id="centerSub">Your voice is your password</p>
+      </div>
+    </div>
+  </main>
+  <footer class="footer">
+    <!--
+      "click when ready" — small grey Poppins, genie-from-distance entrance.
+      "My Voice Is My Password" — white, slightly heavier; each letter is its
+      own <span> so a travelling-pulse animation can fill the letters from
+      75% → 100% opacity while audio is detected (Cursor-thinking style).
+    -->
+    <div class="mic-prompt vo-enter" style="--vo-enter-i:5" id="micPrompt">
+      <p class="prompt-cue">click when ready</p>
+      <p class="prompt-phrase" id="promptPhrase">My Voice Is My Password</p>
+    </div>
+    <button class="mic vo-enter active" style="--vo-enter-i:6" id="micBtn" aria-label="Toggle microphone" aria-pressed="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3"/>
+        <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </button>
+  </footer>
+</div>
+
+<iframe id="warmup" aria-hidden="true" tabindex="-1"></iframe>
+
+<script>
+(() => {
+  'use strict';
+
+  // ─────────────────────────────────────────────────────────────────────
+  // CONFIG
+  // ─────────────────────────────────────────────────────────────────────
+  const VOICE_ACCESS_URL =
+    document.querySelector('meta[name="voice-access-url"]')?.content?.trim() || '';
+  const PHRASE = 'my voice is my password';
+  const COLOR_LERP_RATE = 0.10;
+  const ENTRANCE_DELAY_MS = 200;
+  const ENTRANCE_DURATION_MS = 900;
+  const WING_REVEAL_DELAY_MS = 400;
+  const WING_REVEAL_DURATION_MS = 600;
+  const MIC_AUTOSTART_MS = 780;
+  const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ─────────────────────────────────────────────────────────────────────
+  // STATE TABLE — each state owns its visual style ("viz")
+  //   ripple  → LISTENING / IDLE / SIMULATE / ERROR  (soft floating)
+  //   bars    → SPEAKING / INTERRUPTED               (equalizer)
+  //   dots    → THINKING                             (dotted rings + trails)
+  //   flow    → RESPONDING                           (crossing sine waves)
+  // ─────────────────────────────────────────────────────────────────────
+  const STATES = {
+    IDLE:        { pill:'Idle',          h1:'Welcome to the RTT Platform', sub:'Your voice is your password', L:[78,168,255],  R:[195,84,255],  speed:0.4, amp:0.55, dotOn:false, viz:'ripple' },
+    LISTENING:   { pill:'Listening',     h1:'Welcome to the RTT Platform', sub:'Your voice is your password', L:[78,200,230],  R:[195,84,255],  speed:1.0, amp:1.00, dotOn:true,  viz:'ripple' },
+    SPEAKING:    { pill:'You speaking',  h1:'I hear you',                  sub:'',                            L:[78,168,255],  R:[120,140,255], speed:1.4, amp:1.30, dotOn:true,  viz:'bars'   },
+    THINKING:    { pill:'Thinking',      h1:'',                            sub:'',                            L:[210,210,255], R:[210,210,255], speed:0.9, amp:1.00, dotOn:true,  viz:'comet'  },
+    RESPONDING:  { pill:'AI responding', h1:'You passed',                  sub:'',                            L:[120,255,180], R:[170,255,210], speed:1.0, amp:1.10, dotOn:true,  viz:'mouth'  },
+    FAILED:      { pill:'Try again',     h1:'Sorry, try again',            sub:"That wasn't the phrase",      L:[255,140,90],  R:[255,90,120],  speed:0.9, amp:1.00, dotOn:false, viz:'mouth'  },
+    INTERRUPTED: { pill:'Interrupted',   h1:'Go ahead',                    sub:'',                            L:[255,160,60],  R:[255,100,80],  speed:1.6, amp:1.40, dotOn:true,  viz:'bars'   },
+    SIMULATE:    { pill:'Simulating',    h1:'Welcome to the RTT Platform', sub:'Your voice is your password', L:[78,200,230],  R:[195,84,255],  speed:1.0, amp:1.00, dotOn:true,  viz:'ripple' },
+    ERROR:       { pill:'Error',         h1:'Something went wrong',        sub:'Tap the mic to retry',        L:[239,68,68],   R:[239,68,68],   speed:0.3, amp:0.40, dotOn:false, viz:'ripple' },
+  };
+
+  const Live = {
+    key:        'SIMULATE',
+    viz:        'ripple',
+    L:          new Float32Array([78,200,230]),
+    R:          new Float32Array([195,84,255]),
+    Ltarget:    new Float32Array([78,200,230]),
+    Rtarget:    new Float32Array([195,84,255]),
+    speed:      1.0,
+    amp:        1.0,
+    speedTarget:1.0,
+    ampTarget:  1.0,
+    revealOrb:  REDUCED ? 1 : 0,
+    revealWing: REDUCED ? 1 : 0,
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+  // CANVAS
+  // ─────────────────────────────────────────────────────────────────────
+  const canvas = document.getElementById('wave');
+  const ctx = canvas.getContext('2d', { alpha:true, desynchronized:true });
+  let W = 0, H = 0, DPR = 1;
+  function fit(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const r = canvas.getBoundingClientRect();
+    W = r.width; H = r.height;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  fit();
+  window.addEventListener('resize', fit);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // AUDIO
+  // ─────────────────────────────────────────────────────────────────────
+  const SPECTRUM_BINS = 96;
+  const spec = new Float32Array(SPECTRUM_BINS);
+  const smooth = new Float32Array(SPECTRUM_BINS);
+  let rms = 0;
+
+  let audioCtx = null, analyser = null, micStream = null;
+  let timeData = null, freqData = null;
+
+  async function startMic(){
+    if (audioCtx) return true;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false
+      });
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      const src = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.62;
+      src.connect(analyser);
+      timeData = new Uint8Array(analyser.fftSize);
+      freqData = new Uint8Array(analyser.frequencyBinCount);
+      return true;
+    } catch (e) {
+      console.warn('[orb] mic denied/unavailable:', e?.name || e);
+      return false;
+    }
+  }
+  function stopMic(){
+    if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if (audioCtx){ audioCtx.close(); audioCtx = null; }
+    analyser = null; timeData = null; freqData = null;
+  }
+
+  function sampleSpectrum(){
+    if (analyser){
+      analyser.getByteFrequencyData(freqData);
+      analyser.getByteTimeDomainData(timeData);
+      const N = freqData.length;
+      const per = N / SPECTRUM_BINS;
+      for (let i=0;i<SPECTRUM_BINS;i++){
+        const a = (i*per)|0, b = ((i+1)*per)|0;
+        let s = 0;
+        for (let j=a;j<b;j++) s += freqData[j];
+        spec[i] = (s/(b-a))/255;
+      }
+      let acc = 0;
+      for (let i=0;i<timeData.length;i++){
+        const v = (timeData[i]-128)/128;
+        acc += v*v;
+      }
+      const r = Math.sqrt(acc/timeData.length);
+      rms += (r - rms) * 0.18;
+    } else if (Live.simulate){
+      // No mic but in simulate/demo mode → procedural spectrum so bars stay alive.
+      // Two-sine overlay per band gives organic, non-repeating motion.
+      // Voice-like procedural — dramatic peaks/valleys, traveling crest
+      const t = performance.now() * 0.001;
+      const crest = (Math.sin(t * 0.7) * 0.5 + 0.5);          // 0..1 sweeping crest
+      const punch = Math.pow(0.5 + 0.5 * Math.sin(t * 2.3), 3); // sharp transients
+      for (let i=0;i<SPECTRUM_BINS;i++){
+        const tf    = i / SPECTRUM_BINS;
+        const env   = Math.pow(1 - tf, 1.0) * (0.4 + 0.6 * Math.exp(-Math.pow((tf - crest) * 5, 2)));
+        const speed = 0.4 + i * 0.06;
+        const phase = i * 0.55;
+        const v = env * (
+          0.30 + 0.55 * Math.abs(Math.sin(t * speed + phase)) +
+          0.30 * Math.abs(Math.sin(t * speed * 0.61 + phase * 1.3)) +
+          0.40 * punch * (i % 5 === 0 ? 1 : 0.3)
+        );
+        spec[i] = Math.max(0.10, v);
+      }
+      rms = 0.32 + 0.18 * Math.abs(Math.sin(t * 0.9));
+    } else {
+      // No mic at all → spectrum bleeds off. Each viz uses its own idle motion.
+      for (let i=0;i<SPECTRUM_BINS;i++) spec[i] *= 0.92;
+      rms *= 0.92;
+    }
+    for (let i=0;i<SPECTRUM_BINS;i++){
+      const target = spec[i], cur = smooth[i];
+      const k = target > cur ? 0.55 : 0.14;
+      smooth[i] = cur + (target-cur)*k;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // STATE MACHINE
+  // ─────────────────────────────────────────────────────────────────────
+  const stateDot = document.getElementById('stateDot');
+  const stateText = document.getElementById('stateText');
+  const centerTitle = document.getElementById('centerTitle');
+  const centerSub = document.getElementById('centerSub');
+  const centerBox = document.getElementById('centerBox');
+
+  function applyState(key){
+    const s = STATES[key];
+    if (!s){ console.warn('[orb] unknown state', key); return; }
+    Live.key = key;
+    Live.viz = s.viz;
+    Live.simulate = (key === 'SIMULATE');
+    Live.Ltarget[0]=s.L[0]; Live.Ltarget[1]=s.L[1]; Live.Ltarget[2]=s.L[2];
+    Live.Rtarget[0]=s.R[0]; Live.Rtarget[1]=s.R[1]; Live.Rtarget[2]=s.R[2];
+    Live.speedTarget = s.speed;
+    Live.ampTarget = s.amp;
+    stateText.textContent = s.pill;
+    stateDot.style.background = s.dotOn ? 'var(--green)' : '#555';
+    stateDot.style.boxShadow = s.dotOn
+      ? '0 0 0 2px rgba(34,197,94,0.18),0 0 12px var(--green-glow)'
+      : 'none';
+    centerTitle.textContent = s.h1;
+    centerSub.textContent = s.sub;
+    reportState(key);
+  }
+  window.applyState = applyState;
+
+  // Test seam: Playwright injects phrase results via page.evaluate() because
+  // Web Speech API never fires in headless Chrome (Google's cloud is unreachable).
+  window.voOrbTest = {
+    phraseMatch: () => { if (!isVerdictState()){ sessionGotSpeech = true; sessionMatched = false; onPhraseMatched(); } },
+    phraseFail:  () => { if (!isVerdictState()){ sessionGotSpeech = true; sessionMatched = false; onPhraseFailed(); } },
+    setRms:      (v)  => { rms = Number(v); tickPromptActive(); },
+  };
+
+  function reportState(key){
+    try {
+      fetch('/api/state', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({state:key,at:Date.now()}),
+        keepalive:true,
+      }).catch(()=>{});
+    } catch(_){}
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // VOICE GATE
+  // ─────────────────────────────────────────────────────────────────────
+  function phraseMatch(transcript){
+    const t = (transcript||'').toLowerCase().replace(/[^\w\s]/g,' ').replace(/\s+/g,' ').trim();
+    if (!t) return false;
+    if (t.includes(PHRASE)) return true;
+    const words = PHRASE.split(' ');
+    let hit = 0;
+    for (const w of words) if (t.includes(w)) hit++;
+    return hit >= words.length - 1;
+  }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recog = null;
+  let recogRunning = false;
+  let sessionGotSpeech = false;     // did this recog session hear ANY speech?
+  let sessionMatched = false;       // did it match the passphrase?
+
+  // States that should NOT auto-restart recog (we're showing a verdict)
+  function isVerdictState(){
+    return Live.key === 'THINKING' || Live.key === 'RESPONDING' || Live.key === 'FAILED';
+  }
+
+  function startRecog(){
+    if (!SR){ applyState('SIMULATE'); return; }
+    if (recogRunning) return;
+    try {
+      recog = new SR();
+      recog.lang = 'en-US';
+      recog.continuous = false;
+      recog.interimResults = true;
+      recog.maxAlternatives = 1;
+      recog.onstart = () => {
+        recogRunning = true;
+        sessionGotSpeech = false;
+        sessionMatched = false;
+        if (!isVerdictState()) applyState('LISTENING');
+      };
+      recog.onresult = (ev) => {
+        let transcript = '';
+        let hasFinal = false;
+        for (let i = ev.resultIndex; i < ev.results.length; i++){
+          transcript += ev.results[i][0].transcript;
+          if (ev.results[i].isFinal) hasFinal = true;
+        }
+        if (transcript.trim().length > 0) sessionGotSpeech = true;
+        // Karaoke: move shimmer hotspot to the word being spoken
+        if (promptPhrase && transcript.trim().length > 0) {
+          const spoken = transcript.toLowerCase().replace(/[^\w\s]/g,' ').trim();
+          const words = PHRASE.split(' ');
+          let matched = 0;
+          for (const w of words){ if (spoken.includes(w)) matched++; else break; }
+          const pct = matched / words.length;
+          promptPhrase.classList.add('karaoke');
+          promptPhrase.style.backgroundPosition = `${220 - pct * 440}% center`;
+        }
+        if (phraseMatch(transcript)){
+          sessionMatched = true;
+          onPhraseMatched();
+        } else if (hasFinal && sessionGotSpeech && !sessionMatched){
+          // User said something, but not the phrase
+          onPhraseFailed();
+        }
+      };
+      recog.onerror = (ev) => {
+        if (ev.error === 'not-allowed'){ applyState('SIMULATE'); }
+        else if (ev.error === 'service-not-allowed' || ev.error === 'network'){ applyState('LISTENING'); }
+        recogRunning = false;
+      };
+      recog.onend = () => {
+        recogRunning = false;
+        // If session ended with speech but no decision yet → call it a fail
+        if (sessionGotSpeech && !sessionMatched && !isVerdictState()){
+          onPhraseFailed();
+          return;
+        }
+        // Otherwise keep listening unless we're showing a verdict / idle
+        if (!isVerdictState() && Live.key !== 'IDLE'){
+          setTimeout(() => { if (!recogRunning) startRecog(); }, 250);
+        }
+      };
+      recog.start();
+    } catch (e){
+      console.warn('[orb] recog start failed:', e);
+      applyState('SIMULATE');
+    }
+  }
+  function stopRecog(){
+    if (recog && recogRunning){ try { recog.stop(); } catch(_){} }
+    recogRunning = false;
+  }
+
+  // SUCCESS: light briefly THINKS, then the mouth opens with "You passed".
+  // After ~2s of glow, return to LISTENING so the user can try again.
+  function onPhraseMatched(){
+    if (isVerdictState()) return;
+    if (promptPhrase){ promptPhrase.classList.remove('karaoke'); promptPhrase.style.backgroundPosition = ''; }
+    applyState('THINKING');
+    setTimeout(() => {
+      applyState('RESPONDING');
+      centerBox.classList.remove('vo-burst'); void centerBox.offsetWidth;
+      centerBox.classList.add('vo-burst');
+      setTimeout(() => centerBox.classList.remove('vo-burst'), 1000);
+    }, 700);
+    setTimeout(() => {
+      applyState('LISTENING');
+      sessionGotSpeech = false;
+      sessionMatched = false;
+      if (!recogRunning) startRecog();
+    }, 2700);
+  }
+
+  // FAILURE: light THINKS, mouth opens in red/amber with "Sorry, try again".
+  // After ~2.5s, return to LISTENING and restart recog.
+  function onPhraseFailed(){
+    if (isVerdictState()) return;
+    if (promptPhrase){ promptPhrase.classList.remove('karaoke'); promptPhrase.style.backgroundPosition = ''; }
+    applyState('THINKING');
+    setTimeout(() => {
+      applyState('FAILED');
+      centerBox.classList.remove('vo-burst'); void centerBox.offsetWidth;
+      centerBox.classList.add('vo-burst');
+      setTimeout(() => centerBox.classList.remove('vo-burst'), 1000);
+    }, 600);
+    setTimeout(() => {
+      applyState('LISTENING');
+      sessionGotSpeech = false;
+      sessionMatched = false;
+      if (!recogRunning) startRecog();
+    }, 3000);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // MIC + GEAR
+  // ─────────────────────────────────────────────────────────────────────
+  const micBtn = document.getElementById('micBtn');
+  let micManualOn = true;
+  micBtn.addEventListener('click', async () => {
+    micManualOn = !micManualOn;
+    if (micManualOn){
+      micBtn.classList.add('active');
+      micBtn.setAttribute('aria-pressed','true');
+      await startMic();
+      startRecog();
+      if (Live.key === 'IDLE' || Live.key === 'ERROR') applyState('LISTENING');
+    } else {
+      micBtn.classList.remove('active');
+      micBtn.setAttribute('aria-pressed','false');
+      stopRecog();
+      stopMic();
+      applyState('IDLE');
+    }
+  });
+  document.getElementById('gearBtn').addEventListener('click', () => {});
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PROMPT PHRASE — wrap each letter in its own <span> so the
+  // "My Voice Is My Password" text can fill character-by-character
+  // (Cursor "thinking" / "Reconnecting…" load look) while audio plays.
+  // ─────────────────────────────────────────────────────────────────────
+  const promptPhrase = document.getElementById('promptPhrase');
+  function wrapPromptChars(){
+    if (!promptPhrase) return;
+    const text = promptPhrase.textContent;
+    promptPhrase.textContent = '';
+    let charIdx = 0;
+    for (const ch of text){
+      const span = document.createElement('span');
+      if (ch === ' '){
+        span.classList.add('space');
+        span.innerHTML = '&nbsp;';
+      } else {
+        span.textContent = ch;
+      }
+      span.style.setProperty('--char-i', charIdx);
+      promptPhrase.appendChild(span);
+      // Spaces still get an index so the wave timing stays continuous
+      charIdx++;
+    }
+  }
+  wrapPromptChars();
+
+  // Drive the .active class from a smoothed RMS. Hysteresis so it doesn't
+  // flicker on/off at the threshold.
+  let promptActive = false;
+  const PROMPT_ON  = 0.025;
+  const PROMPT_OFF = 0.015;
+  function tickPromptActive(){
+    if (!promptPhrase) return;
+    if (!promptActive && rms > PROMPT_ON){
+      promptActive = true;
+      promptPhrase.classList.add('active');
+    } else if (promptActive && rms < PROMPT_OFF){
+      promptActive = false;
+      promptPhrase.classList.remove('active');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // ENTRANCE
+  // ─────────────────────────────────────────────────────────────────────
+  function easeOutBack(t){
+    if (t <= 0) return 0; if (t >= 1) return 1;
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t-1,3) + c1 * Math.pow(t-1,2);
+  }
+  function easeOutCubic(t){
+    if (t <= 0) return 0; if (t >= 1) return 1;
+    return 1 - Math.pow(1-t, 3);
+  }
+  let pageLoadedAt = performance.now();
+  function tickEntrance(now){
+    if (REDUCED){ Live.revealOrb = 1; Live.revealWing = 1; return; }
+    const orbT = (now - pageLoadedAt - ENTRANCE_DELAY_MS) / ENTRANCE_DURATION_MS;
+    Live.revealOrb = easeOutBack(orbT);
+    const wingT = (now - pageLoadedAt - WING_REVEAL_DELAY_MS) / WING_REVEAL_DURATION_MS;
+    Live.revealWing = easeOutCubic(wingT);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // SHARED DRAW HELPERS
+  // ─────────────────────────────────────────────────────────────────────
+  function rgba(arr, a){ return `rgba(${arr[0]|0},${arr[1]|0},${arr[2]|0},${a})`; }
+  function brighten(arr, by){
+    return [Math.min(255,arr[0]+by), Math.min(255,arr[1]+by), Math.min(255,arr[2]+by)];
+  }
+
+  // Echo rings — 5 concentric circles radiating from the orb. Subtle blue glow
+  // that's always present and brightens with audio energy. Ported from React ref.
+  function drawConcentricRings(cx, cy, baseR){
+    const t = perfNow * 0.001;
+    const breathe = 0.5 + 0.5 * Math.sin(t * 0.6);
+    // Drive = a mix of audio energy and revealOrb so rings fade in with the orb
+    const energy = Math.min(1, rms * 2.4) * Live.amp;
+    const drive  = Math.max(0.08 + breathe * 0.06, energy) * Live.revealOrb;
+    for (let i = 5; i >= 1; i--){
+      const r = baseR * (1 + i * 0.16);
+      const base = 0.028 + breathe * 0.012;
+      const a = Math.max(0, base - i * 0.004 + drive * 0.055);
+      if (a <= 0.002) continue;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(50,90,200,${a})`;
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+    }
+  }
+
+  function drawVignette(){
+    const cx = W/2, cy = H/2;
+    const r = Math.max(W,H) * 0.75;
+    const v = ctx.createRadialGradient(cx, cy, r*0.25, cx, cy, r);
+    v.addColorStop(0, 'rgba(0,0,0,0)');
+    v.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = v;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PER-STATE VISUAL RENDERERS
+  // Each owns its own idle motion. No global stillness gate.
+  // ─────────────────────────────────────────────────────────────────────
+
+  // LISTENING / SIMULATE / IDLE — bouncing wing flow.
+  //
+  // The wave's energy doesn't sit in the middle of the strip — it BREATHES.
+  // A slow ~7-second cycle moves the Gaussian-shaped energy peak:
+  //
+  //   breath = +1   → both sides' peaks converge ON the ring   ( → 🔵 ← )
+  //   breath =  0   → mid-strip
+  //   breath = -1   → both sides' peaks at the outer edges      ( ←🔵→ )
+  //
+  // When the peak nears the ring there's a small splash boost so the
+  // bounce reads as impact, not slide.
+  function drawRipple(cx, cy, ringR){
+    // Vertical bar wings with diamond nodes — ported from React reference.
+    // 36 bars per side, taller toward the ring, diamond highlights on tall bars,
+    // always-alive baseline via slow breathe modulation.
+    const baseY = cy;
+    const t = perfNow * 0.001;
+    const reveal = Live.revealWing;
+    const breathe = 0.5 + 0.5 * Math.sin(t * 0.6);
+
+    const minDim  = Math.min(W, H);
+    const BAR_W   = Math.max(5, minDim * 0.014);
+    const SPACING = Math.max(14, minDim * 0.028);
+    const GAP     = ringR + minDim * 0.035;
+    const MAX_H   = minDim * 0.26;
+    // Adaptive bar count — fit available horizontal space per side
+    const MARGIN  = 14;
+    const availPerSide = Math.max(0, cx - GAP - MARGIN);
+    const N = Math.max(6, Math.min(28, Math.floor(availPerSide / SPACING)));
+
+    // Faint horizontal baseline across the full width
+    const blg = ctx.createLinearGradient(W * 0.03, 0, W * 0.97, 0);
+    blg.addColorStop(0,    'rgba(30,60,160,0)');
+    blg.addColorStop(0.15, `rgba(50,100,220,${0.18 * reveal})`);
+    blg.addColorStop(0.5,  `rgba(80,140,255,${0.13 * reveal})`);
+    blg.addColorStop(0.85, `rgba(120,60,210,${0.18 * reveal})`);
+    blg.addColorStop(1,    'rgba(80,30,160,0)');
+    ctx.beginPath();
+    ctx.moveTo(W * 0.03, baseY);
+    ctx.lineTo(W * 0.97, baseY);
+    ctx.lineWidth   = 0.6;
+    ctx.strokeStyle = blg;
+    ctx.stroke();
+
+    function drawSideBars(side, color){
+      for (let i = 0; i < N; i++){
+        // Pull FFT magnitude — sample first ~50% of spectrum (vocal range)
+        const bIdx = Math.min(SPECTRUM_BINS - 1, Math.floor((i / N) * SPECTRUM_BINS * 0.52));
+        const amp  = (smooth[bIdx] || 0) * Live.amp;
+
+        // Always-alive minimum height — taller near ring, breathes
+        const minH  = MAX_H * (0.12 + breathe * 0.06) * Math.pow(1 - i / N, 0.7);
+        const taper = Math.pow(1 - i / N, 0.55);
+        const h     = Math.max(minH, amp * MAX_H * 1.8 * taper);
+
+        const x  = cx + side * (GAP + i * SPACING);
+        const tc = i / N;
+
+        // Color blend along the wing — outer tip uses brighter mix
+        const cr = Math.round(color[0] + tc * 18);
+        const cg = Math.round(color[1] - tc * 30);
+        const cb = Math.round(color[2] + tc * 10);
+        const a  = Math.max(0.45, Math.min(1, 0.55 + amp * 0.7)) * reveal;
+
+        // Vertical capsule bar — gradient fades top/bottom, solid center
+        const barGrad = ctx.createLinearGradient(x, baseY - h, x, baseY + h);
+        barGrad.addColorStop(0,    `rgba(${cr},${cg},${cb},${a * 0.25})`);
+        barGrad.addColorStop(0.25, `rgba(${cr},${cg},${cb},${a * 0.95})`);
+        barGrad.addColorStop(0.50, `rgba(${cr},${cg},${cb},${a})`);
+        barGrad.addColorStop(0.75, `rgba(${cr},${cg},${cb},${a * 0.95})`);
+        barGrad.addColorStop(1,    `rgba(${cr},${cg},${cb},${a * 0.25})`);
+
+        const bw = BAR_W;
+        const br = bw * 0.5;
+        const x0 = x - bw / 2;
+        const y0 = baseY - h;
+        const bh = h * 2;
+        ctx.beginPath();
+        ctx.moveTo(x0 + br, y0);
+        ctx.lineTo(x0 + bw - br, y0);
+        ctx.quadraticCurveTo(x0 + bw, y0,      x0 + bw, y0 + br);
+        ctx.lineTo(x0 + bw, y0 + bh - br);
+        ctx.quadraticCurveTo(x0 + bw, y0 + bh, x0 + bw - br, y0 + bh);
+        ctx.lineTo(x0 + br, y0 + bh);
+        ctx.quadraticCurveTo(x0, y0 + bh,      x0, y0 + bh - br);
+        ctx.lineTo(x0, y0 + br);
+        ctx.quadraticCurveTo(x0, y0,           x0 + br, y0);
+        ctx.closePath();
+        ctx.fillStyle = barGrad;
+        ctx.fill();
+
+        // Diamond nodes on taller bars
+        if (amp > 0.20 && i < N - 3){
+          const ds = bw * 2.0 * Math.min(1, amp);
+          for (const dy of [-h * 0.88, h * 0.88]){
+            ctx.save();
+            ctx.translate(x, baseY + dy);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillStyle = `rgba(${cr},${cg},${cb},${a * 0.65})`;
+            ctx.fillRect(-ds / 2, -ds / 2, ds, ds);
+            ctx.restore();
+          }
+        }
+      }
+    }
+
+    drawSideBars(-1, Live.L); // left wing (blue-ish)
+    drawSideBars(+1, Live.R); // right wing (purple-ish)
+  }
+
+  // SPEAKING / INTERRUPTED — vertical equalizer bars driven by FFT
+  function drawBars(cx, cy, ringR){
+    const baseY = cy;
+    const leftEnd = cx - ringR - 14;
+    const rightStart = cx + ringR + 14;
+    const reveal = Live.revealWing;
+    const t = perfNow * 0.001;
+
+    function drawSide(x0, x1, color, isLeft){
+      const len = x1 - x0;
+      if (len <= 4) return;
+      const wingShift = (1 - reveal) * 40 * (isLeft ? -1 : 1);
+      const BARS = 36;
+      const maxAmp = Math.min(H * 0.22, 130) * Live.amp;
+      const bright = brighten(color, 40);
+
+      for (let i=0;i<BARS;i++){
+        const f = i / (BARS - 1);
+        const xRel = isLeft ? (1 - Math.pow(f, 1.25)) : Math.pow(f, 1.25);
+        const x = x0 + xRel * len + wingShift;
+        const binIdx = Math.min(SPECTRUM_BINS-1, Math.floor((isLeft ? (BARS-1-i) : i) * (SPECTRUM_BINS/BARS)));
+        const m = smooth[binIdx];
+        const env = Math.sin(f * Math.PI);
+        const baseline = 5;
+        const driven = (m * 1.4 + Math.abs(Math.sin(t*3 + i*0.4))*0.06) * maxAmp;
+        const h = baseline + driven * env;
+        const proximityToRing = isLeft ? xRel : (1 - xRel);
+        const edgeFade = Math.pow(proximityToRing, 0.55);
+        const a = Math.min(1, 0.35 + rms*4 + m*0.9) * edgeFade * reveal;
+
+        ctx.save();
+        ctx.shadowColor = rgba(color, 0.6);
+        ctx.shadowBlur = 10 + m*14;
+        ctx.fillStyle = rgba(color, a);
+        ctx.fillRect(x - 1.4, baseY - h, 2.8, h*2);
+        ctx.restore();
+        ctx.save();
+        ctx.shadowColor = rgba(bright, 0.6);
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = rgba(bright, a*0.9);
+        ctx.fillRect(x - 0.6, baseY - h*0.92, 1.2, h*1.84);
+        ctx.restore();
+      }
+    }
+
+    drawSide(0, leftEnd, Live.L, true);
+    drawSide(rightStart, W, Live.R, false);
+  }
+
+  // THINKING — wings vanish. A bright comet runs along the ring's outline
+  // only; the ring itself is the canvas. A long fading trail follows the
+  // head around the circumference for a clean, modern "processing" beat.
+  function drawComet(cx, cy, ringR){
+    const t = perfNow * 0.001;
+    const reveal = Live.revealWing;
+
+    // Head sweeps the circle at ~1.4 rad/sec (~4.5s per loop)
+    const headAngle = t * 1.4;
+    const TRAIL = 56;
+    const trailArc = Math.PI * 0.85;  // length of trail along the circumference
+
+    for (let i = 0; i < TRAIL; i++){
+      const f = i / (TRAIL - 1);                 // 0 = head, 1 = tail
+      const angle = headAngle - f * trailArc;
+      const x = cx + Math.cos(angle) * ringR;
+      const y = cy + Math.sin(angle) * ringR;
+      // Sharp falloff so the head stays bright while the tail fades fast
+      const headPower = Math.pow(1 - f, 2.6);
+      const r = 1.4 + headPower * 4.2;
+      const alpha = 0.05 + headPower * 0.92;
+      ctx.save();
+      ctx.shadowColor = `rgba(255,255,255,${alpha * 0.75})`;
+      ctx.shadowBlur = 18 + headPower * 14;
+      ctx.fillStyle = `rgba(255,255,255,${alpha * reveal})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Bright "spark" at the very head for crisp leading edge
+    const hx = cx + Math.cos(headAngle) * ringR;
+    const hy = cy + Math.sin(headAngle) * ringR;
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,255,255,0.95)';
+    ctx.shadowBlur = 28;
+    ctx.fillStyle = `rgba(255,255,255,${reveal})`;
+    ctx.beginPath();
+    ctx.arc(hx, hy, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // RESPONDING (success) and FAILED — wings vanish. Light glows from the
+  // CENTER of the orb like a mouth opening behind the ring. White core
+  // fading through the state's L/R color blend outward. Pulses gently.
+  function drawMouth(cx, cy, ringR){
+    const t = perfNow * 0.001;
+    const reveal = Live.revealWing;
+
+    // Two layered pulses at different rates → organic, not metronomic
+    const pulseA = 0.65 + 0.35 * Math.sin(t * 2.4);
+    const pulseB = 0.70 + 0.30 * Math.sin(t * 1.5 + 1.1);
+    const mouthR = ringR * 0.85 * pulseA;
+    const haloR  = ringR * 1.35;
+
+    const blend = [
+      (Live.L[0] + Live.R[0]) / 2,
+      (Live.L[1] + Live.R[1]) / 2,
+      (Live.L[2] + Live.R[2]) / 2,
+    ];
+
+    ctx.save();
+    ctx.globalAlpha = reveal;
+
+    // Outer halo — colored, sits behind the ring
+    const halo = ctx.createRadialGradient(cx, cy, ringR * 0.4, cx, cy, haloR);
+    halo.addColorStop(0.00, rgba(blend, 0.32 * pulseB));
+    halo.addColorStop(0.45, rgba(blend, 0.18 * pulseB));
+    halo.addColorStop(1.00, rgba(blend, 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner mouth — bright white core, fades through blend
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, mouthR);
+    core.addColorStop(0.00, `rgba(255,255,255,${0.90 * pulseA})`);
+    core.addColorStop(0.30, `rgba(255,255,255,${0.55 * pulseA})`);
+    core.addColorStop(0.70, rgba(blend, 0.30 * pulseA));
+    core.addColorStop(1.00, rgba(blend, 0));
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(cx, cy, mouthR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Razor-thin inner highlight — the "opening" of the mouth
+    const lipR = mouthR * 0.38;
+    const lip = ctx.createRadialGradient(cx, cy, 0, cx, cy, lipR);
+    lip.addColorStop(0.00, `rgba(255,255,255,${0.95 * pulseA})`);
+    lip.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = lip;
+    ctx.beginPath();
+    ctx.arc(cx, cy, lipR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawStateVisual(cx, cy, ringR){
+    switch (Live.viz) {
+      case 'bars':   drawBars(cx, cy, ringR); break;
+      case 'comet':  drawComet(cx, cy, ringR); break;
+      case 'mouth':  drawMouth(cx, cy, ringR); break;
+      case 'ripple':
+      default:       drawRipple(cx, cy, ringR);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // MAIN RING — genie spring entrance + subtle audio-coupled radial wobble
+  // ─────────────────────────────────────────────────────────────────────
+  function drawMainRing(cx, cy, baseR){
+    if (Live.revealOrb <= 0.001) return;
+    const scale = Live.revealOrb;
+    const offsetY = (1 - Math.min(1, Live.revealOrb)) * 60;
+    const blur = (1 - Math.min(1, Live.revealOrb)) * 12;
+    const opacity = Math.max(0, Math.min(1, Live.revealOrb));
+    const r = baseR * scale;
+    const cyAdj = cy + offsetY;
+
+    let leftE = 0, rightE = 0;
+    for (let i=0;i<12;i++) leftE += smooth[i];
+    for (let i=0;i<12;i++) rightE += smooth[SPECTRUM_BINS-1-i];
+    leftE /= 12; rightE /= 12;
+    const wobL = leftE * 6;
+    const wobR = rightE * 6;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    if (blur > 0) ctx.filter = `blur(${blur}px)`;
+
+    // Energy = audio-driven; drive blends with idle breathe so orb is always alive
+    const t = perfNow * 0.001;
+    const breathe = 0.5 + 0.5 * Math.sin(t * 0.6);
+    const energy = Math.min(1, rms * 2.4) * Live.amp;
+    const drive  = Math.max(0.08 + breathe * 0.06, energy);
+
+    // Inner orb fill — pure-black center, mode color tints the edge.
+    // Energy brightens the edge tint.
+    const tint = 0.04 + breathe * 0.05 + drive * 0.18;
+    const inner = ctx.createRadialGradient(cx, cyAdj, 0, cx, cyAdj, r);
+    inner.addColorStop(0,    'rgba(0,0,0,1)');
+    inner.addColorStop(0.30, 'rgba(2,3,12,1)');
+    inner.addColorStop(0.62, rgba(Live.L, tint));
+    inner.addColorStop(0.85, rgba(Live.R, tint * 1.4));
+    inner.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.fillStyle = inner;
+    ctx.beginPath();
+    ctx.arc(cx, cyAdj, r * 0.985, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Outer bloom — pulses outward with energy
+    const bloomA = 0.06 + breathe * 0.04 + drive * 0.22;
+    const bloom  = ctx.createRadialGradient(cx, cyAdj, r * 0.80, cx, cyAdj, r * 1.65);
+    bloom.addColorStop(0,   rgba(Live.L, bloomA));
+    bloom.addColorStop(0.4, rgba(Live.R, bloomA * 0.45));
+    bloom.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle = bloom;
+    ctx.beginPath();
+    ctx.arc(cx, cyAdj, r * 1.65, 0, Math.PI * 2);
+    ctx.fill();
+
+    const mid = [
+      Live.L[0]*0.5+Live.R[0]*0.5,
+      Live.L[1]*0.5+Live.R[1]*0.5,
+      Live.L[2]*0.5+Live.R[2]*0.5,
+    ];
+    const ringGrad = ctx.createLinearGradient(cx-r, cyAdj, cx+r, cyAdj);
+    ringGrad.addColorStop(0.00, rgba(Live.L, 0.85));
+    ringGrad.addColorStop(0.40, rgba(mid, 0.95));
+    ringGrad.addColorStop(0.70, rgba(Live.R, 0.95));
+    ringGrad.addColorStop(1.00, rgba(Live.R, 0.85));
+
+    function ringPath(){
+      const N = 220;
+      ctx.beginPath();
+      for (let i=0;i<=N;i++){
+        const theta = (i/N) * Math.PI * 2 - Math.PI/2;
+        const cosT = Math.cos(theta);
+        const eqWeight = Math.abs(cosT);
+        const wob = cosT < 0 ? wobL : wobR;
+        // Ring-wave: sine modulation driven by audio energy — wave enters
+        // the oracle stroke at the wing junctions (θ≈0 and θ≈π)
+        const ringWave = (leftE + rightE) * 0.5 * 10 * Live.amp
+          * Math.sin(theta * 8 + perfNow * 0.001 * Live.speed * 2.2);
+        const rr = r + eqWeight * wob + ringWave;
+        const x = cx + Math.cos(theta) * rr;
+        const y = cyAdj + Math.sin(theta) * rr;
+        if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+    }
+
+    // Outer glow pass
+    ctx.save();
+    ctx.shadowColor = rgba(mid, 0.70);
+    ctx.shadowBlur = 48;
+    ctx.strokeStyle = ringGrad;
+    ctx.lineWidth = 3.5;
+    ringPath();
+    ctx.stroke();
+    ctx.restore();
+
+    // Core bright pass
+    ctx.save();
+    ctx.shadowColor = rgba(mid, 0.95);
+    ctx.shadowBlur = 16;
+    ctx.strokeStyle = ringGrad;
+    ctx.lineWidth = 2.0;
+    ringPath();
+    ctx.stroke();
+    ctx.restore();
+
+    // Razor highlight pass
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,255,255,0.6)';
+    ctx.shadowBlur = 6;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 0.8;
+    ringPath();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // FRAME LOOP
+  // ─────────────────────────────────────────────────────────────────────
+  let perfNow = performance.now();
+  function frame(now){
+    perfNow = now;
+    tickEntrance(now);
+
+    for (let i=0;i<3;i++){
+      Live.L[i] += (Live.Ltarget[i] - Live.L[i]) * COLOR_LERP_RATE;
+      Live.R[i] += (Live.Rtarget[i] - Live.R[i]) * COLOR_LERP_RATE;
+    }
+    Live.speed += (Live.speedTarget - Live.speed) * COLOR_LERP_RATE;
+    Live.amp   += (Live.ampTarget   - Live.amp)   * COLOR_LERP_RATE;
+
+    sampleSpectrum();
+    tickPromptActive();
+
+    ctx.clearRect(0,0,W,H);
+    const cx = W/2, cy = H/2;
+    const ringR = Math.min(W, H) * 0.148;
+
+    drawConcentricRings(cx, cy, ringR);
+    drawStateVisual(cx, cy, ringR);
+    drawMainRing(cx, cy, ringR);
+    drawVignette();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // BOOT
+  // ─────────────────────────────────────────────────────────────────────
+  if (VOICE_ACCESS_URL){
+    try {
+      const wf = document.getElementById('warmup');
+      wf.src = VOICE_ACCESS_URL.replace(/\/+$/,'') + '/healthz';
+    } catch(_){}
+  }
+  function fireEntrance(){
+    document.body.classList.add('vo-entered');
+    pageLoadedAt = performance.now();
+  }
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', () => setTimeout(fireEntrance, 100));
+  } else {
+    setTimeout(fireEntrance, 100);
+  }
+
+  applyState('SIMULATE');
+
+  setTimeout(async () => {
+    const ok = await startMic();
+    if (ok) { applyState('LISTENING'); startRecog(); }
+    else applyState('SIMULATE');
+  }, MIC_AUTOSTART_MS);
+
+})();
+</script>
+</body>
+</html>

@@ -8,11 +8,13 @@ import OrbRing        from './components/OrbRing';
 import MicButton      from './components/MicButton';
 import StatePanel     from './components/StatePanel';
 import StateBadge     from './components/StateBadge';
-import AuthGate              from './components/AuthGate';
 import ConversationHistory   from './components/ConversationHistory';
 import { saveConversation }  from './lib/db';
+import { getDeviceId }       from './lib/device';
+import { streamChat }        from './lib/api';
+import PlugPanel             from './components/PlugPanel';
 
-function VoiceApp({ user, onSignOut }) {
+function VoiceApp({ userId }) {
   const [state, setState]         = useState(STATES.IDLE);
   const [response, setResp]       = useState('');
   const [thinkingLabel, setThink] = useState('');
@@ -52,37 +54,16 @@ function VoiceApp({ user, onSignOut }) {
     let full = '';
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-      });
-      if (!res.ok) throw new Error(`chat ${res.status}`);
-
       stopThinkingCycle();
       go(STATES.RESPONDING);
-      const reader = res.body.getReader();
-      const dec    = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const lines = dec.decode(value).split('\n').filter(l => l.startsWith('data:'));
-        for (const line of lines) {
-          const d = line.slice(5).trim();
-          if (d === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(d);
-            const chunk  = parsed.text ?? parsed.content
-              ?? parsed.choices?.[0]?.delta?.content ?? '';
-            if (chunk) { full += chunk; setResp(full); }
-          } catch {}
-        }
-      }
+      full = await streamChat(text, {
+        sessionId: userId,
+        onChunk: (accumulated) => setResp(accumulated),
+      });
 
       // Persist conversation to IndexedDB
-      if (full.trim() && user?.id) {
-        saveConversation({ userId: user.id, transcript: text, response: full, durationMs: Date.now() }).catch(() => {});
+      if (full.trim() && userId) {
+        saveConversation({ userId, transcript: text, response: full, durationMs: Date.now() }).catch(() => {});
       }
 
       // TTS — cancelled externally if INTERRUPTED
@@ -111,13 +92,13 @@ function VoiceApp({ user, onSignOut }) {
       stopThinkingCycle();
       go(STATES.ERROR);
     }
-  }, [go, startThinkingCycle, stopThinkingCycle]);
+  }, [go, startThinkingCycle, stopThinkingCycle, userId]);
 
   const { startListening, stopListening, checkSilence } = useVoice({
     onFinalTranscript: handleTranscript,
     onStateChange: go,
     rmsRef,
-    userId: user?.id,
+    userId,
   });
 
   useEffect(() => {
@@ -237,32 +218,14 @@ function VoiceApp({ user, onSignOut }) {
       <StatePanel state={state} smoothed={smoothed} rms={rmsRef.current ?? 0} />
 
       {/* Conversation history — slide-up from bottom-left */}
-      <ConversationHistory userId={user?.id} />
+      <ConversationHistory userId={userId} />
 
-      {/* User pill — top right */}
-      {user && (
-        <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
-          <span className="text-[11px] font-mono text-white/40 tracking-wider">
-            {user.displayName}
-          </span>
-          <button
-            onClick={onSignOut}
-            className="text-[10px] font-mono text-white/20 hover:text-white/50 transition-colors tracking-widest uppercase"
-          >
-            sign out
-          </button>
-        </div>
-      )}
+      <PlugPanel />
     </div>
   );
 }
 
 export default function App() {
-  return (
-    <AuthGate>
-      {({ user, onSignOut }) => (
-        <VoiceApp user={user} onSignOut={onSignOut} />
-      )}
-    </AuthGate>
-  );
+  const userId = getDeviceId();
+  return <VoiceApp userId={userId} />;
 }

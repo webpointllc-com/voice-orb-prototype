@@ -1,0 +1,12 @@
+{
+  "name": "Workplace Technologies — Voice Access",
+  "short_name": "Voice Access",
+  "description": "Voice step-up authentication prototype by Workplace Technologies LLC.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0C14",
+  "theme_color": "#0A0C14",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

@@ -3,18 +3,23 @@ services:
     name: voice-orb-prototype
     env: node
     plan: free
-    buildCommand: npm install --include=dev && npm run build
+    region: oregon
+    branch: main
+    buildCommand: npm install
     startCommand: node server.js
+    healthCheckPath: /healthz
     envVars:
-      - key: GROQ_API_KEY
-        sync: false
-      - key: SESSION_SECRET
-        generateValue: true
       - key: NODE_ENV
         value: production
-      - key: WHISPER_SERVICE_URL
-        sync: false        # Set this to your whisper-service Render URL after deploying
-      - key: LLM_PROVIDER
-        value: groq
-      - key: OLLAMA_MODEL
-        value: llama3.2:3b
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: VOICE_ACCESS_URL
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: WHISPER_URL
+        sync: false
+      - key: ECAPA_URL
+        sync: false

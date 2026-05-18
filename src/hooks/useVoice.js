@@ -1,30 +1,56 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { saveBiometric, saveRecording, updateVoiceProfile } from '../lib/db';
+import { postBiometric, postTranscribe } from '../lib/api';
+
+function createSpeechRecognition() {
+  if (typeof window === 'undefined') return null;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  return SR ? new SR() : null;
+}
 
 /**
- * useVoice.js — MediaRecorder + Whisper pipeline
- * Replaces Web SpeechRecognition with real Whisper via /api/transcribe
- * Merged: Grok's biometric POST + Claude's mimeType fallback, isRecordingRef, stopListening
- * IndexedDB: saves biometric + recording per session when userId provided
+ * Voice input: browser Web Speech (default, no server STT load) or
+ * MediaRecorder → /api/transcribe (Groq) when VITE_STT=groq or no Web Speech.
  */
 export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
   const mediaRecorderRef = useRef(null);
-  const chunksRef        = useRef([]);
-  const silenceTimerRef  = useRef(null);
-  const sessionIdRef     = useRef(null);
-  const rmsHistoryRef    = useRef([]);
-  const isRecordingRef   = useRef(false);
-  // Keep userId in a ref so onstop closure always sees the current value
-  // without requiring startListening to be recreated on every userId change
-  const userIdRef        = useRef(userId);
+  const recognitionRef = useRef(null);
+  const chunksRef = useRef([]);
+  const silenceTimerRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  const rmsHistoryRef = useRef([]);
+  const isRecordingRef = useRef(false);
+  const useBrowserSttRef = useRef(true);
+  const userIdRef = useRef(userId);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
+
+  const postBiometric = useCallback(() => {
+    const bioPayload = {
+      sessionId: sessionIdRef.current,
+      rmsHistory: rmsHistoryRef.current,
+      duration_ms: rmsHistoryRef.current.length * 100,
+    };
+    postBiometric(bioPayload).catch(() => {});
+    const uid = userIdRef.current;
+    if (uid) {
+      saveBiometric({
+        userId: uid,
+        sessionId: bioPayload.sessionId,
+        rmsHistory: bioPayload.rmsHistory,
+        durationMs: bioPayload.duration_ms,
+      }).catch(() => {});
+      updateVoiceProfile(uid, rmsHistoryRef.current.slice(-20)).catch(() => {});
+    }
+  }, []);
 
   const checkSilence = useCallback((rms) => {
     if (!isRecordingRef.current) return;
     if (rms < 0.018) {
       if (!silenceTimerRef.current) {
         silenceTimerRef.current = setTimeout(() => {
-          if (mediaRecorderRef.current?.state === 'recording') {
+          if (recognitionRef.current) {
+            try { recognitionRef.current.stop(); } catch {}
+          } else if (mediaRecorderRef.current?.state === 'recording') {
             mediaRecorderRef.current.stop();
           }
           silenceTimerRef.current = null;
@@ -37,19 +63,54 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
     }
   }, []);
 
-  const startListening = useCallback(async (stream) => {
-    if (!stream) return;
-    sessionIdRef.current  = crypto.randomUUID();
-    rmsHistoryRef.current = [];
-    chunksRef.current     = [];
+  const startBrowserListening = useCallback(() => {
+    const rec = createSpeechRecognition();
+    if (!rec) return false;
 
+    const finals = [];
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finals.push(e.results[i][0].transcript);
+      }
+    };
+
+    rec.onerror = (e) => {
+      if (e.error === 'aborted' || e.error === 'no-speech') return;
+      console.warn('[useVoice] speech error:', e.error);
+      isRecordingRef.current = false;
+      onStateChange?.('ERROR');
+    };
+
+    rec.onend = () => {
+      isRecordingRef.current = false;
+      recognitionRef.current = null;
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+      postBiometric();
+      const transcript = finals.join(' ').trim();
+      if (transcript) onFinalTranscript(transcript);
+    };
+
+    recognitionRef.current = rec;
+    isRecordingRef.current = true;
+    rec.start();
+    return true;
+  }, [onFinalTranscript, onStateChange, postBiometric]);
+
+  const startRecorderListening = useCallback(async (stream) => {
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm';
 
     const mr = new MediaRecorder(stream, { mimeType });
     mediaRecorderRef.current = mr;
-    isRecordingRef.current   = true;
+    isRecordingRef.current = true;
+    chunksRef.current = [];
 
     mr.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -62,40 +123,27 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
 
       const blob = new Blob(chunksRef.current, { type: mimeType });
       chunksRef.current = [];
+      if (blob.size < 1000) return;
 
-      if (blob.size < 1000) return; // too short, skip
+      postBiometric();
 
-      // Biometric snapshot — backend + IndexedDB
-      const bioPayload = {
-        sessionId:   sessionIdRef.current,
-        rmsHistory:  rmsHistoryRef.current,
-        duration_ms: rmsHistoryRef.current.length * 100,
-      };
-      fetch('/api/biometric', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bioPayload),
-      }).catch(() => {});
-      const uid = userIdRef.current; // always current — no stale closure
-      if (uid) {
-        saveBiometric({ userId: uid, sessionId: bioPayload.sessionId, rmsHistory: bioPayload.rmsHistory, durationMs: bioPayload.duration_ms }).catch(() => {});
-        updateVoiceProfile(uid, rmsHistoryRef.current.slice(-20)).catch(() => {});
-      }
-
-      // Transcribe via main service (routes to whisper-service or Groq fallback)
       try {
         const fd = new FormData();
         fd.append('audio', blob, 'audio.webm');
-        const res  = await fetch('/api/transcribe', { method: 'POST', body: fd });
+        const res = await postTranscribe(fd);
         const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `transcribe ${res.status}`);
         const transcript = data.text?.trim();
-        // Save recording blob + transcript to IndexedDB
+        const uid = userIdRef.current;
         if (uid && transcript) {
-          saveRecording({ userId: uid, sessionId: sessionIdRef.current, audioBlob: blob, transcript }).catch(() => {});
+          saveRecording({
+            userId: uid,
+            sessionId: sessionIdRef.current,
+            audioBlob: blob,
+            transcript,
+          }).catch(() => {});
         }
-        if (transcript) {
-          onFinalTranscript(transcript);
-        }
+        if (transcript) onFinalTranscript(transcript);
       } catch (err) {
         console.error('[useVoice] transcribe error:', err);
         onStateChange?.('ERROR');
@@ -103,13 +151,33 @@ export function useVoice({ onFinalTranscript, onStateChange, rmsRef, userId }) {
     };
 
     mr.start(250);
-    return { checkSilence };
-  }, [onFinalTranscript, onStateChange]);
+  }, [onFinalTranscript, onStateChange, postBiometric]);
+
+  const startListening = useCallback(async (stream) => {
+    sessionIdRef.current = crypto.randomUUID();
+    rmsHistoryRef.current = [];
+
+    const forceGroq = import.meta.env.VITE_STT === 'groq';
+    useBrowserSttRef.current = !forceGroq && Boolean(createSpeechRecognition());
+
+    if (useBrowserSttRef.current && startBrowserListening()) return;
+
+    if (!stream) {
+      onStateChange?.('ERROR');
+      return;
+    }
+    useBrowserSttRef.current = false;
+    await startRecorderListening(stream);
+  }, [startBrowserListening, startRecorderListening, onStateChange]);
 
   const stopListening = useCallback(() => {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
-    isRecordingRef.current  = false;
+    isRecordingRef.current = false;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
     if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop();
     }

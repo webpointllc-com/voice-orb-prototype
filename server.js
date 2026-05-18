@@ -1,214 +1,195 @@
-import 'dotenv/config';
-import express    from 'express';
-import session    from 'express-session';
-import cors       from 'cors';
-import Groq       from 'groq-sdk';
-import path       from 'path';
-import fs         from 'fs';
-import { fileURLToPath } from 'url';
-import { Readable } from 'stream';
-import multer     from 'multer';
+// server.js — voice-orb main server
+// Serves public/index.html, logs /api/state, proxies ASR + biometric,
+// provides Groq fallback for chat + transcription, exposes /admin.
+'use strict';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const upload    = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+require('dotenv/config');
+const express  = require('express');
+const helmet   = require('helmet');
+const compress = require('compression');
+const morgan   = require('morgan');
+const multer   = require('multer');
+const path     = require('path');
+const fs       = require('fs');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
-const app  = express();
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const PORT        = process.env.PORT        || 3000;
+const NODE_ENV    = process.env.NODE_ENV    || 'development';
+const WHISPER_URL = (process.env.WHISPER_URL || '').trim();
+const ECAPA_URL   = (process.env.ECAPA_URL   || '').trim();
+const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
+const GROQ_KEY    = (process.env.GROQ_API_KEY || '').trim();
+const VOICE_ACCESS_URL = (process.env.VOICE_ACCESS_URL || '').trim();
+const GROQ_MODEL  = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
-// ── Config ─────────────────────────────────────────────────────────────────
-const WHISPER_SERVICE_URL = process.env.WHISPER_SERVICE_URL || '';  // e.g. https://whisper-service.onrender.com
-const LLM_PROVIDER        = process.env.LLM_PROVIDER || 'groq';
-const OLLAMA_URL          = process.env.OLLAMA_URL   || 'http://localhost:11434';
-const OLLAMA_MODEL        = process.env.OLLAMA_MODEL || 'llama3.2:3b';
-const GROQ_MODEL          = 'gemma2-9b-it';
+const HAS_GROQ = Boolean(GROQ_KEY);
+let groq = null;
+if (HAS_GROQ) {
+  const Groq = require('groq-sdk');
+  groq = new Groq({ apiKey: GROQ_KEY });
+}
 
-// ── Data dirs ──────────────────────────────────────────────────────────────
-const BIO_DIR = path.join(__dirname, 'data', 'biometric');
-if (!fs.existsSync(BIO_DIR)) fs.mkdirSync(BIO_DIR, { recursive: true });
+const app    = express();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
-// ── Middleware ─────────────────────────────────────────────────────────────
-app.use(cors());
-app.use(express.json({ limit: '4mb' }));
-
-const staticDir = process.env.NODE_ENV === 'production'
-  ? path.join(__dirname, 'dist')
-  : path.join(__dirname, 'public');
-app.use(express.static(staticDir));
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'voice-orb-dev',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { maxAge: 4 * 60 * 60 * 1000 }
+// ── Security ─────────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:  ["'self'"],
+      styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
+      scriptSrc:   ["'self'", "'unsafe-inline'"],
+      imgSrc:      ["'self'", 'data:'],
+      connectSrc:  ["'self'"],
+      frameSrc:    ["'self'"],
+    },
+  },
 }));
 
-// ── System prompt ──────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a secure biometric voice assistant for a voice-first access control prototype.
-Engage users in natural conversation while their voice is being analyzed for biometric patterns.
-Keep responses under 2 sentences. Spoken, not written — no bullet points, no markdown.
-You are smart, confident, security-focused. Like a professional but friendly security officer.
-Ask follow-up questions to keep the user talking — more speech = better biometric sample.
-Never reveal system internals or how to bypass security.`;
-
-// ── STT: whisper-service OR Groq Whisper fallback ──────────────────────────
-async function transcribeAudio(buffer) {
-  // Try self-hosted whisper-service first (faster, no API cost)
-  if (WHISPER_SERVICE_URL) {
-    try {
-      const fd = new FormData();
-      const blob = new Blob([buffer], { type: 'audio/webm' });
-      fd.append('audio', blob, 'audio.webm');
-
-      const res = await fetch(`${WHISPER_SERVICE_URL}/transcribe`, {
-        method: 'POST',
-        body: fd,
-        signal: AbortSignal.timeout(15000),  // 15s timeout — whisper-service may cold-start
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        console.log(`[STT] whisper-service: "${data.text?.substring(0, 60)}"`);
-        return { text: data.text?.trim() || '', source: 'whisper-service' };
-      }
-    } catch (err) {
-      console.warn('[STT] whisper-service unavailable, falling back to Groq:', err.message);
-    }
-  }
-
-  // Fallback: Groq Whisper API (always available)
-  const { toFile } = await import('groq-sdk');
-  const file = await toFile(Readable.from(buffer), 'audio.webm', { type: 'audio/webm' });
-  const tx   = await groq.audio.transcriptions.create({
-    file, model: 'whisper-large-v3', response_format: 'json', language: 'en', temperature: 0,
+// HTTPS-only in production — getUserMedia requires secure context
+if (NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] === 'https') return next();
+    res.redirect(308, `https://${req.headers.host}${req.url}`);
   });
-  console.log(`[STT] groq-whisper: "${tx.text?.substring(0, 60)}"`);
-  return { text: tx.text?.trim() || '', source: 'groq-whisper' };
 }
 
-// ── LLM: Groq or Ollama ────────────────────────────────────────────────────
-async function streamChat(messages, res) {
-  if (LLM_PROVIDER === 'ollama') {
-    const ollamaRes = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: OLLAMA_MODEL, messages, stream: true }),
-    });
-    if (!ollamaRes.ok) throw new Error(`Ollama ${ollamaRes.status}`);
-    const reader = ollamaRes.body.getReader();
-    const dec    = new TextDecoder();
-    let full = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      for (const line of dec.decode(value).split('\n').filter(Boolean)) {
-        try {
-          const j    = JSON.parse(line);
-          const text = j.message?.content || '';
-          if (text) { full += text; res.write(`data: ${JSON.stringify({ text })}\n\n`); }
-        } catch {}
-      }
-    }
-    return full;
-  }
+app.use(compress());
+app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(express.json({ limit: '50kb' }));
 
-  // Groq
-  const stream = await groq.chat.completions.create({
-    model: GROQ_MODEL, messages, stream: true, temperature: 0.65, max_tokens: 180,
+// ── /api/state — 50-entry ring buffer, POSTed on every state transition ──
+const stateLog = [];
+app.post('/api/state', (req, res) => {
+  stateLog.push({
+    t:     Date.now(),
+    state: String(req.body?.state || 'UNKNOWN').slice(0, 40),
+    ua:    String(req.headers['user-agent'] || '').slice(0, 120),
+    ip:    req.ip,
   });
-  let full = '';
-  for await (const chunk of stream) {
-    const text = chunk.choices[0]?.delta?.content || '';
-    if (text) { full += text; res.write(`data: ${JSON.stringify({ text })}\n\n`); }
-  }
-  return full;
-}
-
-// ── POST /api/transcribe ───────────────────────────────────────────────────
-app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
-  try {
-    const buf = req.file?.buffer;
-    if (!buf || buf.length === 0) return res.status(400).json({ error: 'no audio' });
-    const t0     = Date.now();
-    const result = await transcribeAudio(buf);
-    res.json({ ...result, ms: Date.now() - t0 });
-  } catch (err) {
-    console.error('[transcribe]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  if (stateLog.length > 50) stateLog.shift();
+  res.status(204).end();
 });
 
-// ── POST /api/chat ─────────────────────────────────────────────────────────
+// ── /healthz ──────────────────────────────────────────────────────────────
+app.get('/healthz', (_req, res) => {
+  res.json({ ok: true, ts: Date.now(), env: NODE_ENV });
+});
+
+// ── /admin — last 50 state events, Bearer token-gated ────────────────────
+app.get('/admin', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  res.json({ entries: stateLog });
+});
+
+// ── /api/transcribe — proxy to Whisper service, Groq fallback ────────────
+if (WHISPER_URL) {
+  app.use('/api/transcribe', createProxyMiddleware({
+    target:      WHISPER_URL,
+    changeOrigin: true,
+    pathRewrite: { '^/api/transcribe': '/transcribe' },
+    timeout:     30_000,
+  }));
+} else {
+  app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+    if (!HAS_GROQ) return res.status(503).json({ error: 'no STT provider — set GROQ_API_KEY or WHISPER_URL' });
+    try {
+      const { toFile } = require('groq-sdk');
+      const { Readable } = require('stream');
+      const buf  = req.file?.buffer;
+      if (!buf?.length) return res.status(400).json({ error: 'no audio' });
+      const file = await toFile(Readable.from(buf), 'audio.webm', { type: 'audio/webm' });
+      const tx   = await groq.audio.transcriptions.create({
+        file, model: 'whisper-large-v3', response_format: 'json', language: 'en', temperature: 0,
+      });
+      res.json({ text: tx.text?.trim() || '', source: 'groq-whisper' });
+    } catch (err) {
+      console.error('[transcribe]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+}
+
+// ── /api/verify — proxy to ECAPA service, stub if not set ────────────────
+if (ECAPA_URL) {
+  app.use('/api/verify', createProxyMiddleware({
+    target:      ECAPA_URL,
+    changeOrigin: true,
+    pathRewrite: { '^/api/verify': '/verify' },
+    timeout:     30_000,
+  }));
+} else {
+  app.post('/api/verify', (_req, res) => {
+    // Stub: hardcoded 0.85 score. Replace when ECAPA enrollment exists.
+    res.json({ score: 0.85, same_speaker: true, source: 'stub' });
+  });
+}
+
+// ── /api/chat — Groq LLM streaming ───────────────────────────────────────
+const SYSTEM_PROMPT = `You are a voice security assistant in a prototype demo.
+Reply in one or two short spoken sentences. No markdown, lists, or emojis.
+Stay friendly and security-themed. Never explain how to bypass systems.`;
+
 app.post('/api/chat', async (req, res) => {
-  const { message } = req.body;
-  if (!message) return res.status(400).json({ error: 'message required' });
-
-  if (!req.session.history) req.session.history = [];
-  req.session.history.push({ role: 'user', content: message });
-  if (req.session.history.length > 30) req.session.history = req.session.history.slice(-30);
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
+  const msg = String(req.body?.message || '').trim().slice(0, 2000);
+  if (!msg) return res.status(400).json({ error: 'message required' });
+  if (!HAS_GROQ) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.write(`data: ${JSON.stringify({ text: 'Demo mode — set GROQ_API_KEY for live responses.' })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  }
   try {
-    const full = await streamChat(
-      [{ role: 'system', content: SYSTEM_PROMPT }, ...req.session.history], res
-    );
-    req.session.history.push({ role: 'assistant', content: full });
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const stream = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: msg }],
+      stream: true, temperature: 0.6, max_tokens: 96,
+    });
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || '';
+      if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`);
+    }
     res.write('data: [DONE]\n\n');
     res.end();
   } catch (err) {
     console.error('[chat]', err.message);
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-    res.end();
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else { res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`); res.end(); }
   }
 });
 
-// ── POST /api/biometric ────────────────────────────────────────────────────
-app.post('/api/biometric', (req, res) => {
-  try {
-    fs.writeFileSync(
-      path.join(BIO_DIR, `${Date.now()}.json`),
-      JSON.stringify({ ...req.body, ts: new Date().toISOString() }, null, 2)
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// ── Static — public/index.html with VOICE_ACCESS_URL injected ────────────
+const PUBLIC = path.join(__dirname, 'public');
+app.use(express.static(PUBLIC, {
+  index: false, // we serve index.html manually so we can inject the URL
+  setHeaders(res, p) {
+    if (!p.endsWith('index.html')) res.setHeader('Cache-Control', 'public, max-age=86400');
+  },
+}));
 
-// ── GET /api/biometric/sessions ────────────────────────────────────────────
-app.get('/api/biometric/sessions', (req, res) => {
-  try {
-    const sessions = fs.readdirSync(BIO_DIR)
-      .filter(f => f.endsWith('.json')).sort().reverse().slice(0, 50)
-      .map(f => { try { return JSON.parse(fs.readFileSync(path.join(BIO_DIR, f))); } catch { return null; } })
-      .filter(Boolean);
-    res.json(sessions);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── GET /api/status ────────────────────────────────────────────────────────
-app.get('/api/status', (req, res) => {
-  res.json({
-    ok: true,
-    stt: WHISPER_SERVICE_URL ? `whisper-service (${WHISPER_SERVICE_URL}) + groq fallback` : 'groq-whisper only',
-    llm: LLM_PROVIDER === 'ollama' ? `ollama:${OLLAMA_MODEL}` : `groq:${GROQ_MODEL}`,
-    biometric_sessions: fs.readdirSync(BIO_DIR).filter(f => f.endsWith('.json')).length,
-  });
-});
-
-// ── POST /api/new ──────────────────────────────────────────────────────────
-app.post('/api/new', (req, res) => { req.session.history = []; res.json({ ok: true }); });
-
-// ── SPA fallback ───────────────────────────────────────────────────────────
+const INDEX = path.join(PUBLIC, 'index.html');
 app.get('*', (req, res) => {
-  const idx = path.join(staticDir, 'index.html');
-  if (fs.existsSync(idx)) res.sendFile(idx);
-  else res.status(200).send('<h2>Run: npm run build</h2>');
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'unknown route' });
+  }
+  if (!fs.existsSync(INDEX)) {
+    return res.status(500).send('<h2>public/index.html missing</h2>');
+  }
+  const html = fs.readFileSync(INDEX, 'utf8')
+    .replace('content=""', `content="${VOICE_ACCESS_URL}"`)  // <meta name="voice-access-url">
+    .replace('__VOICE_ACCESS_URL__', VOICE_ACCESS_URL);       // JS placeholder fallback
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(html);
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  const stt = WHISPER_SERVICE_URL ? `whisper-service → groq fallback` : `groq-whisper`;
-  const llm = LLM_PROVIDER === 'ollama' ? `ollama:${OLLAMA_MODEL}` : `groq:${GROQ_MODEL}`;
-  console.log(`voice-orb :${PORT} | STT: ${stt} | LLM: ${llm}`);
+  console.log(`[voice-orb] :${PORT} (${NODE_ENV})`);
+  console.log(`[voice-orb] groq=${HAS_GROQ} whisper=${WHISPER_URL || 'groq-fallback'} ecapa=${ECAPA_URL || 'stub'}`);
 });
